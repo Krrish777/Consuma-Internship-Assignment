@@ -12,7 +12,7 @@ help: ## Show available targets
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 setup: ## Install/lock all workspace dependencies
-	$(UV) sync
+	$(UV) sync --all-packages
 
 dev: ## Build & start the full 6-service docker-compose stack (foreground)
 	docker compose up --build
