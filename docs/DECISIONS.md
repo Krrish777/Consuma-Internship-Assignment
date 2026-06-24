@@ -68,3 +68,23 @@
   Storti backoff) into our core/infra adapters + worker handlers — pattern transfer, not wholesale copy.
 - **Why:** No single repo matches the full assignment; the integration IS the assignment. Our boundaries
   (test_architecture.py) and MUST rules constrain HOW the borrowed patterns land. Climb the Rung ladder TDD.
+
+### 2026-06-24 · First slice molded from `base-aiopika-pattern`: broker adapter + event contracts
+- **What:** `core/infra/broker.py` (connect/declare_minimal/publish/consume) + `core/domain/events.py`
+  (R1.4 pydantic contracts) + worker rewired to the adapter + integration test (testcontainers RabbitMQ).
+  Scoped with the user to broker+events; the rest (retry ladder, ingestion, storage, semaphore) backlogged.
+- **Why (the load-bearing deviations from the skeleton — molding, not copying):**
+  - **Manual ack-LAST** instead of the skeleton's `async with message.process()` auto-ack. Auto-ack acks on
+    handler return, so a crash between work and downstream-publish loses the event. Dimension: Reliability.
+  - **Durable named `pipeline` exchange + durable `q.parse`** instead of default-exchange + `auto_delete`
+    queue. Choreography topology must survive a broker restart. Dimension: State across boundaries.
+  - **Publisher confirms ON** + **PERSISTENT** messages (skeleton had confirms off) — don't lose a publish.
+  - **Events carry pointers only** (str-keyed pydantic models, frozen, defaulted `event_id`); bytes live in
+    MinIO. Enforced structurally by a unit test asserting every event field is `str`. Dimension: Architecture.
+  - Kept pydantic-settings v2 (skeleton used pydantic v1 `BaseSettings`).
+- **Scope seam:** `declare_minimal` is Rung-0 (exchange + q.parse) only; the 1/4/16s retry ladder + q.dlq is
+  R2.1, molded later from `retry-dlx-aiopika`. Left a clean seam rather than half-stubbing the ladder now.
+- **Rejected:** copying the skeleton's `message.process()` consume loop (violates ack-LAST); declaring the
+  full retry topology now (premature — belongs to its own reference repo + rung).
+- **Verified:** `make check` green (ruff + mypy --strict 28 files + 13 unit tests). Broker integration test
+  auto-skips without Docker; its real proof + R0.2 stack proof are deferred until Docker is available.
