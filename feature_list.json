@@ -9,15 +9,15 @@
       "rung": 0,
       "behavior": "Gateway boots; GET /health returns 200 {\"status\":\"ok\"}.",
       "verification": ["uv run pytest tests/unit -k health (FastAPI TestClient, no Docker)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k health -> 1 passed; commit b6f68f3"
     },
     {
       "id": "R0.2",
       "rung": 0,
       "behavior": "Worker boots, connects to RabbitMQ via connect_robust, and idles without crashing.",
       "verification": ["docker compose up worker -> logs 'worker connected'"],
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": ""
     },
     {
@@ -57,8 +57,8 @@
       "rung": 1,
       "behavior": "Pydantic event contracts JobCreated/TtsRequested/StitchReady, each carrying event_id (pointers, never bytes).",
       "verification": ["uv run pytest tests/unit -k events"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k events -> 7 passed; commit b6f68f3 (fmt b5a7870)"
     },
     {
       "id": "R2.1",
