@@ -1,10 +1,19 @@
 """FastAPI app entrypoint (spec §5).
 
-STUB. Endpoints arrive across Rung 0-5:
-  GET  /health            (0.2)
-  POST /jobs              (0.4, 1.3) -> 202 {job_id}; claim-check manuscript to MinIO
-  GET  /status/{job_id}   (0.4)
-  GET  /stats             (5.1) observability
+Rung 0 boot: app + GET /health so the gateway is runnable under compose and proves
+the service starts. Job endpoints (POST /jobs, GET /status) arrive in later rungs.
 
 Run by compose as: uvicorn gateway.main:app
 """
+
+from __future__ import annotations
+
+from fastapi import FastAPI
+
+app = FastAPI(title="Consuma Audio Engine — Gateway")
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    """Liveness probe — used by docker-compose healthcheck and the init.sh wait loop."""
+    return {"status": "ok"}
