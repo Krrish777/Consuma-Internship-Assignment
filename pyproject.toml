@@ -1,0 +1,25 @@
+[project]
+name = "consuma-audio-engine"
+version = "0.1.0"
+description = "Core async engine: text manuscript -> simulated produced audio drama (choreographed microservices)."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+# This root is the workspace umbrella, not a distributable package.
+# `package = false` tells uv not to try to build it as a wheel.
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/core", "services/gateway", "services/worker"]
+
+# Shared dev/test toolchain lives at the root, installed for the whole workspace.
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "testcontainers",
+    "httpx",
+    "ruff",
+]
