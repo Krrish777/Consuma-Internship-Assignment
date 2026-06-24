@@ -38,6 +38,12 @@ Types: mypy --strict.
 - **Clock out:** update `PROGRESS.md`; log any new design choice in `docs/DECISIONS.md`; run
   `make check`; commit each atomic unit of completed work (one logical change = one commit).
 
+## Work rules (WIP = 1)
+- Work on **one** feature at a time. Start the next only after the current one **passes its
+  verification** (the `verify` command in `feature_list.json`). Enforced by `check-wip.py`.
+- Don't "also refactor" B while implementing A. No starting many things and finishing none.
+- "Done" = behavior verification passes, never "the code looks fine".
+
 ## Hard constraints (MUST / MUST NOT)
 - **MUST NOT** use a managed orchestrator (Temporal/Airflow/Step Functions/**Celery**). Raw
   broker choreography only. Seeing `@app.task` / `@shared_task` / `Flower` = wrong path.
