@@ -1,8 +1,51 @@
 """Message contracts (pydantic) — broker payloads carry pointers, never bytes (spec §7).
 
-STUB. Implemented across Rung 0.4 / 1.4 / 1.5:
+The broker transports **events**, not data. Every field is a string key/identifier; the
+actual bytes live in MinIO and are fetched by key on the consuming side. Each event carries
+a defaulted, unique ``event_id`` — the idempotency key the inbox (``processed_events``) and
+``SETNX`` guards dedupe on, since at-least-once delivery means any event can arrive twice.
+
+Pure domain: no I/O imports (enforced by tests/unit/test_architecture.py).
+
   JobCreated    { event_id, job_id }              gateway -> q.parse
-  TtsRequested  { event_id, job_id, task_id }     parse   -> q.tts  (xN)
+  TtsRequested  { event_id, job_id, task_id }     parse   -> q.tts   (xN)
   StitchReady   { event_id, job_id }              tts(last) -> q.stitch
-All carry event_id for idempotency.
 """
+
+from __future__ import annotations
+
+import uuid
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+def _new_event_id() -> str:
+    """Fresh idempotency key. uuid4 → str so the contract is bytes-free (spec §7)."""
+    return uuid.uuid4().hex
+
+
+class _Event(BaseModel):
+    """Base for all broker events: frozen (immutable in flight) + a defaulted event_id."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_id: str = Field(default_factory=_new_event_id)
+
+
+class JobCreated(_Event):
+    """Gateway → q.parse: a new manuscript was ingested; parse it."""
+
+    job_id: str
+
+
+class TtsRequested(_Event):
+    """Parse → q.tts (fanned out ×N): synthesize one parsed block."""
+
+    job_id: str
+    task_id: str
+
+
+class StitchReady(_Event):
+    """TTS (the worker that decremented pending_count to 0) → q.stitch: all blocks done."""
+
+    job_id: str
