@@ -23,9 +23,18 @@
 - [x] .claude harness hooks: block-coauthor, verify-before-commit, check-line-cap, check-wip, check-evidence
 
 ## In Progress
-- [ ] Harness setup walkthrough — notes 1–13 done; next note 14 (Session Hygiene, final)
-- Note 13: observability sized to a single-dev harness — `job_id` trace-key convention in CLAUDE.md;
-  process observability already covered (feature_list verification + SPEC §2 rubric + DECISIONS).
+- [x] Harness setup walkthrough — **all 14 notes done. Harness setup COMPLETE.**
+- Note 13: observability sized to a single-dev harness — `job_id` trace-key convention in CLAUDE.md.
+- Note 14: clean-state exit checklist in CLAUDE.md clock-out; ruff T10/T20 enforce "no debug code"
+  mechanically; harness-is-living/simplify-periodically principle recorded.
+
+## NEXT SESSION — implement via reference code (user directive 2026-06-24)
+- Goal: pull the reference repos (SPEC §7) and **mold them into OUR codebase shape**, not copy wholesale.
+  - `kieled/fastapi-aiopika-boilerplate` → bones for gateway↔aio-pika wiring (R0.2/R0.3, R2.1).
+  - `py-redis-semaphore` (BLPOP token-list) → R4.1 leased semaphore. Brian Storti backoff → R3.3 DLQ ladder.
+- Mold = adapt the PATTERN into core/infra adapters + worker handlers, honoring SPEC §3 boundaries
+  (test_architecture.py will reject cross-layer imports) and CLAUDE.md MUST rules (no Celery, ack-last,
+  pointers-not-bytes). Start at R0.1 (in_progress) → climb the Rung ladder, TDD per rung.
 - Note 11: test-layer scaffolding — pytest markers (integration/e2e), tests/e2e pkg,
   conftest.py auto-skips Docker tests when no daemon; validation hierarchy in CLAUDE.md. Bodies = per-rung TDD.
 - Note 12: tests/unit/test_architecture.py — mechanically enforces SPEC §3 boundaries

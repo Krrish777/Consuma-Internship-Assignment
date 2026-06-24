@@ -53,3 +53,18 @@
   agent commit. Dimension: Reliability (the harness must actually enforce, not appear to).
 - **Rejected:** Reinstating a separate single-source `verify.py` indirection — inlined the gates
   instead (fewer moving parts, no path-math fragility).
+
+### 2026-06-24 · Session hygiene made mechanical (note 14)
+- **What:** Clock-out is now a clean-state completion condition (CLAUDE.md). Enabled ruff `T10`+`T20`
+  (extend-select) so leftover `breakpoint()`/`print` fail the lint gate. Recorded "harness is living —
+  simplify periodically" principle.
+- **Why:** Lehman's laws — agents copy existing patterns, so drift compounds without mechanical guards;
+  a rule the model can't trip over beats prose. Fast-merge philosophy is explicitly NOT adopted (single-dev,
+  low-throughput → careful review is correct here).
+- **Rejected:** Mechanically banning TODO/FIXME (the Rung-stub docstrings are legitimate placeholders).
+
+### 2026-06-24 · Next phase = mold reference code into our shape (user directive)
+- **What:** Implementation will adapt SPEC §7 reference repos (kieled boilerplate, py-redis-semaphore,
+  Storti backoff) into our core/infra adapters + worker handlers — pattern transfer, not wholesale copy.
+- **Why:** No single repo matches the full assignment; the integration IS the assignment. Our boundaries
+  (test_architecture.py) and MUST rules constrain HOW the borrowed patterns land. Climb the Rung ladder TDD.
