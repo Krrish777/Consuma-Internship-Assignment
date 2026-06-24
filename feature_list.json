@@ -1,0 +1,144 @@
+{
+  "$comment": "Harness scope surface (note 9). The foundational data structure: scheduler picks the in_progress item, verifier gates active->passing, handoff reads state. JSON (not MD) so it isn't casually overwritten. Every feature starts failing; it must EARN 'passing' via its verification command + recorded evidence (commit hash). Hooks: check-wip.py (exactly one in_progress), check-evidence.py (no 'passing' without evidence).",
+  "wip_limit": 1,
+  "states": ["not_started", "in_progress", "blocked", "passing"],
+  "rules": "One feature in_progress at a time. active->passing ONLY when `verification` runs green AND `evidence` records the proof (commit hash + verify reference). Do not hand-edit a feature to 'passing'.",
+  "features": [
+    {
+      "id": "R0.1",
+      "rung": 0,
+      "behavior": "Gateway boots; GET /health returns 200 {\"status\":\"ok\"}.",
+      "verification": ["uv run pytest tests/unit -k health (FastAPI TestClient, no Docker)"],
+      "status": "in_progress",
+      "evidence": ""
+    },
+    {
+      "id": "R0.2",
+      "rung": 0,
+      "behavior": "Worker boots, connects to RabbitMQ via connect_robust, and idles without crashing.",
+      "verification": ["docker compose up worker -> logs 'worker connected'"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R0.3",
+      "rung": 0,
+      "behavior": "Full 6-service docker-compose stack builds and all services report healthy.",
+      "verification": ["./init.sh -> all services healthy; exit 0"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R1.1",
+      "rung": 1,
+      "behavior": "SQLAlchemy models Job, Task, ProcessedEvent + Alembic migration; durable truth in Postgres.",
+      "verification": ["uv run pytest tests/integration -k models (Postgres via testcontainers)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R1.2",
+      "rung": 1,
+      "behavior": "Job FSM can_transition() enforces legal transitions (PENDING->PARSING->GENERATING->STITCHING->COMPLETED; any->FAILED).",
+      "verification": ["uv run pytest tests/unit -k state_machine (pure, no Docker)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R1.3",
+      "rung": 1,
+      "behavior": "MinIO storage adapter: ensure_bucket, put_text/get_text, put_bytes/get_bytes, list_prefix.",
+      "verification": ["uv run pytest tests/integration -k storage (MinIO via testcontainers)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R1.4",
+      "rung": 1,
+      "behavior": "Pydantic event contracts JobCreated/TtsRequested/StitchReady, each carrying event_id (pointers, never bytes).",
+      "verification": ["uv run pytest tests/unit -k events"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R2.1",
+      "rung": 2,
+      "behavior": "Broker topology declared: exchange + q.parse/q.tts/q.stitch + per-stage retry ladder (1/4/16s) + q.dlq.",
+      "verification": ["uv run pytest tests/integration -k topology (RabbitMQ via testcontainers)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R2.2",
+      "rung": 2,
+      "behavior": "Ingestion: POST /jobs saves manuscript .txt to MinIO, inserts Job(PENDING), publishes JobCreated; GET /status/{id} reflects state.",
+      "verification": ["uv run pytest tests/integration -k ingestion (POST /jobs -> 202 + Job PENDING + event published)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R2.3",
+      "rung": 2,
+      "behavior": "Parse handler: split blocks, write N Task rows + pending_count=N in ONE transaction, fan-out TtsRequested xN, advance GENERATING. 0-block manuscript -> STITCHING directly (no hang).",
+      "verification": ["uv run pytest tests/integration -k parse_fanout AND -k zero_block_terminates"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R3.1",
+      "rung": 3,
+      "behavior": "Crash recovery: manual ack LAST (after Postgres commit), prefetch set, NACK->retry path. docker kill mid-job loses no message.",
+      "verification": ["make e2e -k crash_recovery (docker kill worker mid-job -> redelivered, job converges)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R3.2",
+      "rung": 3,
+      "behavior": "Idempotent consumers: processed_events inbox (INSERT ON CONFLICT DO NOTHING) + task:done SETNX. Duplicate delivery has exactly-once effect; no double pending_count decrement.",
+      "verification": ["make e2e -k duplicate_delivery (same JobCreated x2 -> single effect, counter correct)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R3.3",
+      "rung": 3,
+      "behavior": "DLQ: poison pill dead-letters after 3 retries with exponential backoff, off the hot queue (no head-of-line blocking of healthy traffic). Job -> FAILED.",
+      "verification": ["make e2e -k poison_pill (-> DLQ after 3 attempts; concurrent healthy jobs still complete)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R4.1",
+      "rung": 4,
+      "behavior": "Global TTS semaphore in Redis (leased token list, TTL): max 3 concurrent across ALL workers; a crashed worker's slot auto-reclaims via TTL.",
+      "verification": ["make e2e -k semaphore (>3 requested -> never >3 in flight; killed holder's slot returns)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R4.2",
+      "rung": 4,
+      "behavior": "TTS handler: content-hash cache check BEFORE acquiring a slot (cache hit burns no token); PUT tts/<hash>.wav; SETEX cache. Fan-in via atomic UPDATE...RETURNING -> exactly one worker sees 0 and emits StitchReady.",
+      "verification": ["make e2e -k cache (identical block -> no 2nd vendor call) AND -k fan_in (exactly one StitchReady)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R4.3",
+      "rung": 4,
+      "behavior": "Stitch & notify: concat chunks -> out/<job>.mp3 in MinIO, Job COMPLETED, fire webhook/log. Webhook failure does NOT fail the job.",
+      "verification": ["make e2e -k stitch (full happy path -> COMPLETED + asset) AND -k webhook_failure_still_completed"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R5.1",
+      "rung": 5,
+      "behavior": "Observability: GET /stats exposes job/queue counts.",
+      "verification": ["uv run pytest tests/integration -k stats"],
+      "status": "not_started",
+      "evidence": ""
+    }
+  ]
+}

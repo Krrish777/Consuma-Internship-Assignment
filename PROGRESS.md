@@ -23,16 +23,18 @@
 - [x] .claude harness hooks: block-coauthor, verify-before-commit, check-line-cap, check-wip, check-evidence
 
 ## In Progress
-- [ ] Harness setup walkthrough — notes 1–7 done; next note 8 (Scope & WIP=1)
+- [ ] Harness setup walkthrough — notes 1–9 done; next note 10 (Preventing Premature Victory)
 
 ## Known Issues / Gaps
+- **Broken inherited hooks (fix in note 10):** `check-evidence.py` references an unimported
+  `validate_feature_list` + wrong repo-root math → always fails open (evidence gate is DEAD).
+  `verify-before-commit.py` shells to a non-existent `verify.py` → would FALSE-BLOCK agent commits.
 - Docker bring-up unverified: `make dev` / `./init.sh` / `make test-int` need Docker Desktop (verify later)
 - minio healthcheck (curl-based) may need adjustment if the image lacks curl — flagged in compose
-- feature_list.json (structured WIP=1 ladder, from the Rung plan in docstrings) not yet created (note 9)
 - No integration/e2e/behavior tests yet (notes 10–11)
 
 ## Next Steps
-1. Note 8 — Scope & WIP=1 (verify check-wip.py hook covers it)
-2. Note 9 — feature_list.json formalizing the Rung plan (Rung 0–5)
+1. Note 10 — rewrite check-evidence.py + verify-before-commit.py (self-contained, match schema); pass-state gating
+2. Note 11 — E2E/behavior test layer (the `make e2e` suite referenced in feature_list.json)
 3. Verify Docker stack once Docker Desktop is installed (`./init.sh`)
-4. Begin pipeline implementation against the feature ladder (Rung 1+), TDD per note 11
+4. Begin pipeline implementation against the feature ladder (Rung 1+, R0.1 in_progress), TDD per note 11

@@ -38,11 +38,14 @@ Types: mypy --strict.
 - **Clock out:** update `PROGRESS.md`; log any new design choice in `docs/DECISIONS.md`; run
   `make check`; commit each atomic unit of completed work (one logical change = one commit).
 
-## Work rules (WIP = 1)
-- Work on **one** feature at a time. Start the next only after the current one **passes its
-  verification** (the `verify` command in `feature_list.json`). Enforced by `check-wip.py`.
+## Work rules (WIP = 1) & feature list
+- Scope surface: `feature_list.json` (root). It is the single source of "what's done" — the
+  Rung ladder R0→R5. Read it to pick the next task; don't contradict it from memory.
+- Work on **one** feature at a time (exactly one `in_progress`; enforced by `check-wip.py`).
+  Start the next only after the current one **passes its `verification`**.
 - Don't "also refactor" B while implementing A. No starting many things and finishing none.
-- "Done" = behavior verification passes, never "the code looks fine".
+- "Done" = the feature's `verification` command runs green AND `evidence` records the proof
+  (commit hash). Never hand-edit a feature to `passing` — pass-state is earned, not declared.
 
 ## Hard constraints (MUST / MUST NOT)
 - **MUST NOT** use a managed orchestrator (Temporal/Airflow/Step Functions/**Celery**). Raw
