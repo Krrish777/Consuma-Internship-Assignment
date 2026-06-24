@@ -47,7 +47,9 @@ def test_contracts_carry_pointers_only_no_bytes() -> None:
     # never a payload blob. This guards against a future field smuggling bytes.
     for model in (JobCreated, TtsRequested, StitchReady):
         for name, field in model.model_fields.items():
-            assert field.annotation is str, f"{model.__name__}.{name} must be str, got {field.annotation}"
+            assert field.annotation is str, (
+                f"{model.__name__}.{name} must be str, got {field.annotation}"
+            )
 
 
 def test_stitch_ready_shape() -> None:
