@@ -30,6 +30,9 @@ Types: mypy --strict.
   `mypy --strict` → `pytest tests/unit`.
 - `make check-all` — full DoD: adds `make test-int` (testcontainers) + `make e2e`
   (docker-kill / poison-pill / duplicate) + behavior/functional tests. **Needs a Docker daemon.**
+- Validation hierarchy (note 11): L1 static (ruff+mypy) → L2 unit → L3 integration → L4 e2e.
+  A lower level failing blocks the higher ones; **skipping a required level = not complete**.
+  Any cross-component change (broker/DB/Redis/MinIO interplay) MUST pass e2e before `passing`.
 - No "done" without runnable proof. A passing suite is the only evidence that counts.
 
 ## Session ritual (state lives in git, not in your head)

@@ -43,3 +43,13 @@
   test, not features. Docker unavailable locally, so `make check` = no-Docker gates; `make check-all` adds
   Docker gates. Dimension: Architecture (the compose topology is itself a graded decision — SPEC §2).
 - **Rejected:** Infra-only compose (assignment needs all 6 via compose); deferring compose entirely.
+
+### 2026-06-24 · Rewrote check-evidence.py + verify-before-commit.py self-contained (note 10)
+- **What:** Evidence gate blocks any feature marked `passing` lacking a commit hash in `evidence` +
+  non-empty `verification`. Commit gate runs ruff -> mypy --strict -> unit tests and blocks on RED,
+  failing OPEN only when a gate can't launch (no false-block). Both verified with crafted payloads.
+- **Why:** The inherited AMRIT versions referenced an unimported `validate_feature_list` and a
+  non-existent `verify.py` — the evidence gate was dead and the commit gate would false-block every
+  agent commit. Dimension: Reliability (the harness must actually enforce, not appear to).
+- **Rejected:** Reinstating a separate single-source `verify.py` indirection — inlined the gates
+  instead (fewer moving parts, no path-math fragility).

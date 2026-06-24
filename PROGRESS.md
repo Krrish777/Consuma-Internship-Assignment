@@ -23,12 +23,11 @@
 - [x] .claude harness hooks: block-coauthor, verify-before-commit, check-line-cap, check-wip, check-evidence
 
 ## In Progress
-- [ ] Harness setup walkthrough — notes 1–9 done; next note 10 (Preventing Premature Victory)
+- [ ] Harness setup walkthrough — notes 1–10 done; next note 11 (Beyond Unit Tests / E2E)
 
 ## Known Issues / Gaps
-- **Broken inherited hooks (fix in note 10):** `check-evidence.py` references an unimported
-  `validate_feature_list` + wrong repo-root math → always fails open (evidence gate is DEAD).
-  `verify-before-commit.py` shells to a non-existent `verify.py` → would FALSE-BLOCK agent commits.
+- [x] FIXED (note 10): check-evidence.py (evidence gate) + verify-before-commit.py (commit gate)
+  rewritten self-contained and verified — were dead/false-blocking inherited AMRIT artifacts.
 - Docker bring-up unverified: `make dev` / `./init.sh` / `make test-int` need Docker Desktop (verify later)
 - minio healthcheck (curl-based) may need adjustment if the image lacks curl — flagged in compose
 - No integration/e2e/behavior tests yet (notes 10–11)

@@ -37,14 +37,14 @@ typecheck: ## mypy --strict (config in pyproject.toml)
 test-unit: ## Unit tests only (no Docker)
 	$(UV) run pytest tests/unit
 
-test-int: ## Integration tests (needs Docker / testcontainers)
-	$(UV) run pytest tests/integration
+test-int: ## Integration tests — marker 'integration' (needs Docker / testcontainers)
+	$(UV) run pytest -m integration
 
 test: ## All pytest tests
 	$(UV) run pytest
 
-e2e: ## E2E crash / poison-pill / duplicate tests (needs Docker) — not yet implemented
-	@echo "E2E suite not yet implemented (harness note 11)."
+e2e: ## E2E crash / poison-pill / duplicate tests — marker 'e2e' (needs Docker)
+	$(UV) run pytest -m e2e
 
 check: lint typecheck test-unit ## DoD gates runnable WITHOUT Docker
 	@echo "OK: lint + typecheck + unit tests passed."
