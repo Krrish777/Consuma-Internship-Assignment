@@ -21,7 +21,7 @@ members = ["packages/core", "services/gateway", "services/worker"]
 dev = [
     "pytest",
     "pytest-asyncio",
-    "testcontainers",
+    "testcontainers[rabbitmq]",
     "httpx",
     "ruff",
     "mypy>=1.13",
@@ -65,5 +65,5 @@ namespace_packages = true
 
 # Third-party libs without bundled type stubs — don't fail --strict on them.
 [[tool.mypy.overrides]]
-module = ["aio_pika.*", "minio.*"]
+module = ["aio_pika.*", "minio.*", "testcontainers.*"]
 ignore_missing_imports = true
