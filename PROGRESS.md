@@ -23,7 +23,9 @@
 - [x] .claude harness hooks: block-coauthor, verify-before-commit, check-line-cap, check-wip, check-evidence
 
 ## In Progress
-- [ ] Harness setup walkthrough — notes 1–12 done; next note 13 (Observability)
+- [ ] Harness setup walkthrough — notes 1–13 done; next note 14 (Session Hygiene, final)
+- Note 13: observability sized to a single-dev harness — `job_id` trace-key convention in CLAUDE.md;
+  process observability already covered (feature_list verification + SPEC §2 rubric + DECISIONS).
 - Note 11: test-layer scaffolding — pytest markers (integration/e2e), tests/e2e pkg,
   conftest.py auto-skips Docker tests when no daemon; validation hierarchy in CLAUDE.md. Bodies = per-rung TDD.
 - Note 12: tests/unit/test_architecture.py — mechanically enforces SPEC §3 boundaries

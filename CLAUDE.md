@@ -38,8 +38,12 @@ Types: mypy --strict.
 ## Session ritual (state lives in git, not in your head)
 - **Clock in:** read `PROGRESS.md` (+ `docs/DECISIONS.md` if touching design); run `make check` to
   confirm the repo is in a consistent state; continue from PROGRESS "Next Steps".
-- **Clock out:** update `PROGRESS.md`; log any new design choice in `docs/DECISIONS.md`; run
-  `make check`; commit each atomic unit of completed work (one logical change = one commit).
+- **Clock out (clean state is a completion condition):** `make check` green · `feature_list.json`
+  updated · no debug code left (no `print`/`breakpoint` — enforced by ruff) · standard startup path
+  (`./init.sh` / `make dev`) intact · update `PROGRESS.md` + `docs/DECISIONS.md` · commit each
+  atomic unit (one logical change = one commit). Don't leave mess for "next time" — entropy compounds.
+- The harness is living, not fixed: each rule patches a model limitation. Periodically simplify it
+  as models improve (note 14) — delete scaffolding that's become pure overhead.
 
 ## Work rules (WIP = 1) & feature list
 - Scope surface: `feature_list.json` (root). It is the single source of "what's done" — the
@@ -62,6 +66,12 @@ Types: mypy --strict.
   queue — no head-of-line blocking.
 - **MUST** keep `core/domain` free of I/O. **MUST** keep gateway and worker mutually independent.
 - Webhook/notification failure **MUST NOT** fail the job — it is still `COMPLETED`.
+
+## Observability (job_id is the trace key)
+- Every log line carries `job_id` (and `task_id` in TTS) so one job is followable across
+  gateway → broker → worker → DB, like a distributed trace. Emit structured logs.
+- `GET /stats` (R5.1) is the runtime view; RabbitMQ UI :15672 + MinIO console :9001 for infra.
+- E2E/behavior tests may assert on these signals (e.g. "after docker kill, job redelivered").
 
 ## State placement (golden rule)
 Postgres = durable truth · Redis = ephemeral coordination · MinIO = bytes · broker = pointers.
