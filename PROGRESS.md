@@ -23,7 +23,9 @@
 - [x] .claude harness hooks: block-coauthor, verify-before-commit, check-line-cap, check-wip, check-evidence
 
 ## In Progress
-- [ ] Harness setup walkthrough — notes 1–10 done; next note 11 (Beyond Unit Tests / E2E)
+- [ ] Harness setup walkthrough — notes 1–11 done; next note 12 (Architectural Boundaries)
+- Note 11: test-layer scaffolding done — pytest markers (integration/e2e), tests/e2e pkg,
+  conftest.py auto-skips Docker tests when no daemon; validation hierarchy in CLAUDE.md. Bodies = per-rung TDD.
 
 ## Known Issues / Gaps
 - [x] FIXED (note 10): check-evidence.py (evidence gate) + verify-before-commit.py (commit gate)
