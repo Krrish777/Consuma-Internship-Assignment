@@ -256,6 +256,30 @@
       "evidence": "uv run pytest tests/integration -k 'models or redis' -> 24 passed (3 new: db.mark_event (pg dialect insert ON CONFLICT DO NOTHING) -> True first / False duplicate as the durable AUTHORITY; db.purge_processed_events deletes rows older than window (H10 retention, DB-side now()) -> deleted==1 aged gone fresh kept; redis.seen_once SETNX fast-path -> True then False, non-authoritative H3) against real postgres:17-alpine + redis:7-alpine; full gate: ruff+fmt clean, mypy 44 files 0 errors, pytest tests/unit 82 passed; commit 6203aeb HEAD anchor (user handles git)"
     },
     {
+      "id": "B4",
+      "rung": 4,
+      "behavior": "Atomic fan-in decrement guarded in-transaction (BOM 03-B4, the highest-weight state-across-boundaries mechanism): complete_task_and_decrement(session, job_id, task_id, audio_key)->int|None in core/infra/queries.py does, in ONE transaction, a durable idempotent claim (UPDATE tasks SET status='DONE', audio_key WHERE task_id AND status<>'DONE') then, ONLY if rowcount==1, an atomic barrier decrement (UPDATE jobs SET pending_count=pending_count-1 RETURNING pending_count). Returns remaining (caller emits StitchReady when 0) or None (already-counted duplicate -> no decrement). H3: the dup-guard is the in-tx conditional UPDATE, NEVER Redis SETNX (evictable -> double-decrement -> early StitchReady -> incomplete drama marked COMPLETED). Exactly one caller observes remaining==0 under concurrent redelivery; never read-subtract-write (lost update).",
+      "verification": ["uv run pytest tests/integration -k 'models or fan_in' (N tasks decrement to exactly 0 once; same task delivered twice decrements once; concurrent decrements lose no update)"],
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k 'models or fan_in' -> 9 passed (3 new B4 fan_in: N tasks decrement N..0 with exactly one observed 0; SAME task delivered twice -> 2nd claim rowcount 0 -> None, counter decremented exactly once; 8 concurrent decrements via asyncio.gather across SEPARATE sessions -> results == perm(0..7), exactly one 0, final pending_count==0) against real postgres:17-alpine; complete_task_and_decrement in core/infra/queries.py (in-tx conditional tasks.status claim = H3 durable authority + atomic UPDATE jobs SET pending_count=pending_count-1 RETURNING, never read-subtract-write); full gate: ruff+fmt clean, mypy 45 files 0 errors, pytest tests/unit 82 passed; commit b891a95 HEAD anchor (user handles git)"
+    },
+    {
+      "id": "H15",
+      "rung": 2,
+      "behavior": "Set pending_count only on the first CAS out of PENDING (BOM backlog-H15, parse re-runnability corollary of H2): begin_parse(session, job_id, n_blocks)->bool does a CAS UPDATE jobs SET status=PARSING, pending_count=N WHERE job_id AND status=PENDING. rowcount==1 => first run (counter set, returns True); rowcount==0 => parse redelivery (job already advanced, counter untouched, returns False). A parse re-run MUST NOT reset pending_count (that would resurrect already-decremented tasks and the job would never finish). NOTE: FSM legal successor of PENDING is PARSING (state.py LEGAL), not GENERATING as the card title loosely states.",
+      "verification": ["uv run pytest tests/integration -k 'models or counter_once' (begin_parse twice -> True then False; counter set exactly once; a re-run leaves a decremented counter intact)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "B6",
+      "rung": 5,
+      "behavior": "Status-count aggregate for /stats (BOM 03-B6, powers G7/R5.1): job_counts_by_status(session)->dict[str,int] via select(Job.status, func.count()).group_by(Job.status) -> .all(). Read-only aggregate (no locks, no writes); SQL GROUP BY, never load all rows and count in Python.",
+      "verification": ["uv run pytest tests/integration -k 'models or stats' (seed jobs in mixed states -> returned dict matches expected per-status counts)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
       "id": "R2.3",
       "rung": 2,
       "behavior": "Parse handler: split blocks, write N Task rows + pending_count=N in ONE transaction, fan-out TtsRequested xN, advance GENERATING. 0-block manuscript -> STITCHING directly (no hang).",

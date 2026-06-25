@@ -13,6 +13,7 @@ The engine is function-scoped to avoid asyncpg attaching to a stale event loop
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Generator
 from datetime import UTC, datetime, timedelta
 
@@ -31,6 +32,7 @@ from core.infra.db import (
     mark_event,
     purge_processed_events,
 )
+from core.infra.queries import complete_task_and_decrement
 
 pytestmark = pytest.mark.integration
 
@@ -161,3 +163,77 @@ async def test_purge_processed_events_removes_aged_rows(engine: AsyncEngine) -> 
         remaining = (await session.execute(select(ProcessedEvent.event_id))).scalars().all()
     assert "inbox-aged" not in remaining
     assert "inbox-fresh" in remaining
+
+
+# --- B4: atomic fan-in decrement, guarded in-transaction (H3) ----------------
+
+
+async def _seed_job_with_tasks(engine: AsyncEngine, n: int) -> tuple[str, list[str]]:
+    """Seed one Job(pending_count=n) with n PENDING Tasks; return (job_id, task_ids)."""
+    async with get_session(engine) as session:
+        job = Job(manuscript_key=f"raw/fanin-{n}.txt", pending_count=n)
+        session.add(job)
+        await session.flush()
+        job_id = job.job_id
+        task_ids: list[str] = []
+        for i in range(n):
+            task = Task(job_id=job_id, block_index=i, block_hash=f"h{i}")
+            session.add(task)
+            await session.flush()
+            task_ids.append(task.task_id)
+        await session.commit()
+    return job_id, task_ids
+
+
+async def test_fan_in_decrements_to_zero_exactly_once(engine: AsyncEngine) -> None:
+    """N task completions decrement N..0; exactly one caller observes 0 (-> StitchReady)."""
+    job_id, task_ids = await _seed_job_with_tasks(engine, 3)
+
+    observed: list[int | None] = []
+    for tid in task_ids:
+        async with get_session(engine) as session:
+            observed.append(
+                await complete_task_and_decrement(session, job_id, tid, f"tts/{tid}.wav")
+            )
+
+    assert observed == [2, 1, 0]
+    assert observed.count(0) == 1  # exactly one barrier-crossing
+
+
+async def test_fan_in_duplicate_task_is_noop(engine: AsyncEngine) -> None:
+    """The SAME task delivered twice decrements once: 2nd claim rowcount 0 -> None, no decrement."""
+    job_id, task_ids = await _seed_job_with_tasks(engine, 2)
+    tid = task_ids[0]
+
+    async with get_session(engine) as session:
+        first = await complete_task_and_decrement(session, job_id, tid, "tts/dup.wav")
+    async with get_session(engine) as session:
+        duplicate = await complete_task_and_decrement(session, job_id, tid, "tts/dup.wav")
+
+    assert first == 1  # decremented from 2 -> 1
+    assert duplicate is None  # already-counted: no-op sentinel
+
+    async with get_session(engine) as session:
+        job = await session.get(Job, job_id)
+        assert job is not None
+        assert job.pending_count == 1  # decremented exactly once, not twice
+
+
+async def test_fan_in_concurrent_no_lost_update(engine: AsyncEngine) -> None:
+    """N concurrent decrements (separate sessions) lose no update: results == perm(0..N-1)."""
+    n = 8
+    job_id, task_ids = await _seed_job_with_tasks(engine, n)
+
+    async def complete(tid: str) -> int | None:
+        async with get_session(engine) as session:
+            return await complete_task_and_decrement(session, job_id, tid, f"tts/{tid}.wav")
+
+    results = await asyncio.gather(*(complete(tid) for tid in task_ids))
+
+    assert sorted(r for r in results if r is not None) == list(range(n))  # 0..n-1, no dupes
+    assert results.count(0) == 1  # exactly one saw the barrier
+
+    async with get_session(engine) as session:
+        job = await session.get(Job, job_id)
+        assert job is not None
+        assert job.pending_count == 0
