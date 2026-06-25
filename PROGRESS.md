@@ -3,6 +3,14 @@
 > Durable cross-session state. Read at session start; update before session end.
 > Structured feature status lives in `feature_list.json` (see CLAUDE.md). Decisions: `docs/DECISIONS.md` + `docs/SPEC.md §4, §6`.
 
+> **⚡ SESSION-RESET PLAN (read FIRST on 2026-06-25 after limit reset):** the human prepped working,
+> tested code snippets during downtime. **Read `snippets/README.md` FIRST** — it's the full Bill of
+> Materials: the whole project decomposed into 11 component folders (`snippets/01-config` … `11-tests`),
+> each with bite-size snippet cards (target file, signature, MUST rules, acceptance test, gotcha). The
+> human dropped `snippet.py` + `proof.txt` per card. `docs/SNIPPET-PREP.md` remains the *deep-dive* for the
+> 9 hardest mechanisms (⭐⭐⭐). Then climb the Rung ladder: write the rung's test first, adapt the snippet,
+> verify, record evidence. Highest-value: M2 retry ladder, R2 leased semaphore, B4 fan-in (all ⭐⭐⭐).
+
 ## Current State
 - Phase: **implementation** — molding reference repos into our shape, 1 at a time, up the Rung ladder.
 - First slice DONE (uncommitted): molded `base-aiopika-pattern` skeleton → broker adapter + event contracts.
@@ -47,6 +55,11 @@
   (gateway⊥worker, domain purity/no-I/O, no banned orchestrator) inside `make check`.
 
 ## Known Issues / Gaps
+- **⚠️ RELIABILITY BACKLOG (2026-06-24 arch review):** `BACKLOG.md` (root) lists 22 hardening items —
+  5 are **S0 silent-corruption/stall** defects in the design as specified (H-XDEATH, H1, H2, H3, H4) that
+  each fail a `kill -9` probe. Fold the linked fix into each rung as it's built; do NOT mark R2–R4
+  `passing` until its linked items are addressed. Full traces + research citations:
+  `tmp/ARCH-REVIEW-2026-06-24.md`. Several require **SPEC §4 changes** (it currently teaches the bugs).
 - [x] FIXED (note 10): check-evidence.py (evidence gate) + verify-before-commit.py (commit gate)
   rewritten self-contained and verified — were dead/false-blocking inherited AMRIT artifacts.
 - Docker bring-up unverified: `make dev` / `./init.sh` / `make test-int` need Docker Desktop (verify later)
