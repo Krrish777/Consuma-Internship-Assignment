@@ -378,8 +378,8 @@
       "rung": 4,
       "behavior": "Webhook notify / failure != job failure (BOM 08-W5, MUST #8): after COMPLETED, if callback_url is set and passes the H-SSRF guard, POST a small JSON payload (job_id, status, final_key) with httpx (follow_redirects=False, hard timeout). Wrapped in try/except: a webhook failure is logged and swallowed — the job stays COMPLETED. Never retry the webhook on the pipeline retry ladder (would ride a completed job into the DLQ).",
       "verification": ["uv run pytest tests/integration -k webhook (unreachable/failing callback -> job still COMPLETED with asset, failure logged; not-allowlisted URL -> skipped/log-only)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k webhook -> 3 passed (delivered: allowlisted+allowed URL receives JSON payload {job_id,status=COMPLETED,final_key}; failure-tolerant: httpx.ConnectError swallowed -> job stays COMPLETED with asset intact (MUST #8); log-only: empty allowlist -> httpx.AsyncClient never constructed) against real pg+rmq+redis+minio. _notify in worker/handlers/stitch.py called after finalize (outside raise-path, never on retry ladder): no callback -> skip; empty allowlist -> log-only; else is_allowed (H-SSRF) guard then httpx.post(follow_redirects=False, timeout=WEBHOOK_TIMEOUT_S), all failures logged+swallowed. Live e2e is Phase-6 R4.3; here L3. full gate: ruff+fmt clean, mypy 64 files 0 errors, pytest tests/unit 106 passed; commit f62825c HEAD anchor (user handles git)"
     },
     {
       "id": "R2.3",
