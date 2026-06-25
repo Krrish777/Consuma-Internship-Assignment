@@ -223,6 +223,20 @@ class Semaphore:
             )
         return reclaimed
 
+    @asynccontextmanager
+    async def slot(self, owner: str, *, timeout: float = 0.0) -> AsyncIterator[str | None]:
+        """``async with sem.slot(owner) as token:`` — release even on exception.
+
+        Yields the token (or None if a finite timeout elapsed). Releases only when a
+        token was actually acquired, so a timed-out acquire never RPUSHes a phantom.
+        """
+        token = await self.acquire(owner, timeout=timeout)
+        try:
+            yield token
+        finally:
+            if token is not None:
+                await self.release(token)
+
 
 class Cache:
     """Content-hash TTS cache (Constraint B: cost-idempotency).
@@ -250,19 +264,9 @@ class Cache:
         return None if raw is None else _as_str(raw)
 
     async def cache_set(self, content_hash: str, url: str) -> None:
-        """Record url for this content hash with the configured TTL (SETEX)."""
-        await self._client.setex(self._key(content_hash), self.ttl, url)
+        """Record url for this content hash with the configured TTL.
 
-    @asynccontextmanager
-    async def slot(self, owner: str, *, timeout: float = 0.0) -> AsyncIterator[str | None]:
-        """``async with sem.slot(owner) as token:`` — release even on exception.
-
-        Yields the token (or None if a finite timeout elapsed). Releases only when a
-        token was actually acquired, so a timed-out acquire never RPUSHes a phantom.
+        Uses ``SET key url EX ttl`` — the standalone ``SETEX`` command is deprecated
+        in redis-py 8 in favour of ``SET``'s ``ex=`` option (same atomic effect).
         """
-        token = await self.acquire(owner, timeout=timeout)
-        try:
-            yield token
-        finally:
-            if token is not None:
-                await self.release(token)
+        await self._client.set(self._key(content_hash), url, ex=self.ttl)
