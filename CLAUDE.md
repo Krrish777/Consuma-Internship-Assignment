@@ -3,10 +3,6 @@
 Agent landing page. This is a **router**, not the spec. Read the linked docs on demand.
 **Single source of truth for requirements & decisions: [`docs/SPEC.md`](docs/SPEC.md).**
 
-> **After compaction / new session:** read [`.claude/BRIEFING.md`](.claude/BRIEFING.md) first — it
-> contains persona, the 8 MUSTs, methodology, current card state, and the immediate next steps.
-> Then read [`.remember/remember.md`](.remember/remember.md) for the latest session handoff.
-
 ## What this is
 Core async engine: text manuscript → simulated produced audio drama, via **choreographed**
 microservices (no central orchestrator). It is a distributed-systems reliability test — the
@@ -23,9 +19,9 @@ Types: mypy --strict.
   `infra/` = swappable adapters (`db`, `redis`, `broker`, `storage`).
 - `services/gateway` — FastAPI ingestion. Depends on `core`, **never** on `worker`.
 - `services/worker` — aio-pika consumer running the pipeline. Depends on `core`, **never** on `gateway`.
-- `docs/SPEC.md` — requirements truth. `PROGRESS.md` — current work state (read at session start).
+- `docs/SPEC.md` — requirements truth. `docs/DECISIONS.md` — design-decision log.
 
-## Run  (targets are part of harness setup — see PROGRESS.md for build status)
+## Run
 - `./init.sh` — one-shot: bring up the 6-service docker-compose stack + wait for health.
 - `docker compose up --build` — stack only. Scale workers: `docker compose up --scale worker=4`.
 
@@ -38,25 +34,6 @@ Types: mypy --strict.
   A lower level failing blocks the higher ones; **skipping a required level = not complete**.
   Any cross-component change (broker/DB/Redis/MinIO interplay) MUST pass e2e before `passing`.
 - No "done" without runnable proof. A passing suite is the only evidence that counts.
-
-## Session ritual (state lives in git, not in your head)
-- **Clock in:** read `PROGRESS.md` (+ `docs/DECISIONS.md` if touching design); run `make check` to
-  confirm the repo is in a consistent state; continue from PROGRESS "Next Steps".
-- **Clock out (clean state is a completion condition):** `make check` green · `feature_list.json`
-  updated · no debug code left (no `print`/`breakpoint` — enforced by ruff) · standard startup path
-  (`./init.sh` / `make dev`) intact · update `PROGRESS.md` + `docs/DECISIONS.md` · commit each
-  atomic unit (one logical change = one commit). Don't leave mess for "next time" — entropy compounds.
-- The harness is living, not fixed: each rule patches a model limitation. Periodically simplify it
-  as models improve (note 14) — delete scaffolding that's become pure overhead.
-
-## Work rules (WIP = 1) & feature list
-- Scope surface: `feature_list.json` (root). It is the single source of "what's done" — the
-  Rung ladder R0→R5. Read it to pick the next task; don't contradict it from memory.
-- Work on **one** feature at a time (exactly one `in_progress`; enforced by `check-wip.py`).
-  Start the next only after the current one **passes its `verification`**.
-- Don't "also refactor" B while implementing A. No starting many things and finishing none.
-- "Done" = the feature's `verification` command runs green AND `evidence` records the proof
-  (commit hash). Never hand-edit a feature to `passing` — pass-state is earned, not declared.
 
 ## Hard constraints (MUST / MUST NOT)
 - **MUST NOT** use a managed orchestrator (Temporal/Airflow/Step Functions/**Celery**). Raw

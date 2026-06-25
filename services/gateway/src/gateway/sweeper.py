@@ -1,4 +1,4 @@
-"""PENDING-sweeper / reconciler (G8 / R3.4 — closes the gateway dual-write seam, H1).
+"""PENDING-sweeper / reconciler (closes the gateway dual-write seam).
 
 ``POST /jobs`` does MinIO → DB commit → publish, but commit-then-publish is not
 atomic. A crash in that window leaves an **orphaned PENDING job whose JobCreated
@@ -7,10 +7,10 @@ and cannot cover the *producer*. So a periodic sweeper treats the Job row as its
 own outbox: any job stuck in PENDING past a generous timeout gets its JobCreated
 re-published.
 
-Re-publishing is safe **only because parse is idempotent and re-runnable** (H2:
-ON CONFLICT task inserts + H15: begin_parse seeds pending_count only on the first
+Re-publishing is safe **only because parse is idempotent and re-runnable** (
+ON CONFLICT task inserts + begin_parse seeds pending_count only on the first
 CAS out of PENDING). The sweeper itself stays dumb: it **only re-publishes, never
-mutates job status** — advancing the FSM is the consumer's job (G8 MUST NOT).
+mutates job status** — advancing the FSM is the consumer's job.
 """
 
 from __future__ import annotations
@@ -59,11 +59,11 @@ async def sweep_once(
 
 
 async def purge_once(*, engine: AsyncEngine, retention_s: int) -> int:
-    """Delete processed_events inbox rows older than ``retention_s`` (H10/H3).
+    """Delete processed_events inbox rows older than ``retention_s``.
 
     Returns the number of rows deleted. The inbox is the durable exactly-once
     authority (``mark_event``); without retention it grows unbounded. Kept separate
-    from ``sweep_once`` (which stays re-publish-only by the G8 decision) so each
+    from ``sweep_once`` (which stays re-publish-only) so each
     concern is independently tested. ``get_session`` does not auto-commit, so the
     DELETE is committed explicitly. The cutoff uses DB-side ``now()`` inside
     ``purge_processed_events`` (clock-skew-immune).
@@ -87,8 +87,8 @@ async def run_sweeper(
     """Loop the reconciler every ``interval_s`` until cancelled (lifespan-managed).
 
     Each pass does two independent jobs: ``sweep_once`` re-drives orphaned PENDING
-    jobs (G8), and ``purge_once`` trims the processed_events inbox past its retention
-    window (H10/H3). Sleeps *before* the first pass so a freshly-started gateway
+    jobs, and ``purge_once`` trims the processed_events inbox past its retention
+    window. Sleeps *before* the first pass so a freshly-started gateway
     doesn't fire a redundant pass on boot, and so tests with a long interval never
     trigger it. Each job is wrapped separately so a failure in one never skips the
     other, and a failing pass is logged and swallowed — one bad pass must never kill
