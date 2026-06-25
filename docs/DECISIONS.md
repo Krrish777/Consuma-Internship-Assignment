@@ -272,3 +272,41 @@ each card's evidence states its L3/L4 split explicitly (no level silently skippe
   event loop and overrides `PARSE_FAILURE_RATE=0.0` for determinism (the 15% failure path is unit-covered).
 - **Verified:** `make check` green (ruff + ruff format + mypy --strict 64 files + 106 unit); integration L3 per
   card all green (bootstrap 2, parse 5, tts 3, dlq 3, stitch 3, webhook 3). Anchor commit f62825c (user handles git).
+
+### 2026-06-25 · Phase 5 — Gateway completion (docs/features/05-gateway.md exhausted; G7, H13, G8)
+- **What:** Implemented the three remaining gateway cards via TDD (RED→GREEN→verify), one at a time, WIP=1.
+  Mapped onto existing tracker rows: G7→R5.1, G8→R3.4 (both had L3 `-k` verifies identical to the cards), and
+  H13 got a fresh `feature_list.json` entry. Anchor commit `e48428e` (user handles git).
+- **G7 `GET /stats` (R5.1).** `StatsResponse{jobs:dict[str,int]}` over B6 `job_counts_by_status` (SQL
+  `GROUP BY`, never a Python row-scan), **zero-filled across all six FSM states** so the JSON shape is stable
+  for dashboards regardless of which statuses have rows (B6 intentionally omits zero-count statuses; the
+  zero-fill is the endpoint's presentation job). **Queue depths deliberately omitted** — the card lists them
+  optional and "keep it simple"; adding broker round-trips to a stats endpoint that must stay read-only and
+  robust isn't worth it. Job counts are the graded core.
+- **H13 manuscript size guard.** Enforced in an **HTTP middleware** (`guard_manuscript_size`), not the route:
+  by the time `create_job(body: CreateJobRequest)` runs, FastAPI has already buffered + parsed the whole body,
+  so a `len(body.manuscript)` check there is too late to prevent the OOM. The middleware inspects
+  `Content-Length` *before* the body is read and rejects oversized requests with a machine-readable `413`
+  (R2.2c contract). **Known residual:** a chunked upload with no `Content-Length` bypasses the pre-check —
+  that's the case the card's "or stream to MinIO" alternative would cover; left documented rather than
+  rebuilding the dual-write path as a streaming upload. The cap bounds the whole request body (a superset of
+  the manuscript), which is the correct DoS surface.
+- **G8 PENDING-sweeper (R3.4) ⭐ — closes the producer-side dual-write seam (H1).** "Ack last" protects the
+  *consumer*; `POST /jobs`'s `commit→publish` is the *producer* gap (crash between them = orphaned PENDING job
+  whose JobCreated was never sent). Fix = **outbox-via-state**: the Job row in PENDING *is* the outbox.
+  `sweep_once` selects only PENDING job_ids older than DB-side `now()-PENDING_TIMEOUT_S` (clock-skew-immune,
+  mirroring `purge_processed_events`) and re-publishes JobCreated. **MUST NOT mutate status** — advancing the
+  FSM is the consumer's job; the sweeper only re-publishes. Re-publishing is safe **only because parse is
+  idempotent/re-runnable** (H2 ON CONFLICT inserts + H15 begin_parse CAS seeds the counter once). `run_sweeper`
+  loops it every `SWEEP_INTERVAL_S` (**sleep-first** so it never fires on boot or during fast tests), launched
+  as an `asyncio.Task` in the gateway lifespan and cancelled cleanly on shutdown.
+- **G8 scope call:** kept `run_sweeper` to **re-publish only** (no H10 retention folded in), so every added
+  line stayed tested — the card lists retention as optional. `purge_processed_events()` + worker-side
+  `Semaphore.reap()` remain tested primitives awaiting a scheduler (documented follow-up). `reap()` belongs in
+  the worker bootstrap, not the gateway sweeper (the gateway has no Semaphore).
+- **Test loop-binding note:** aio-pika channels are bound to the event loop that created them, so the sweeper
+  L3 tests open their own broker connection inside each `asyncio.run` rather than reusing the gateway lifespan's
+  exchange (which lives on the TestClient's loop) — cross-loop publish would raise.
+- **Verified:** `make check` green (ruff + ruff format + mypy --strict **67 files** + 106 unit); L3 per card —
+  stats 3, ingestion 9 (incl. 2 H13), sweeper 4; full gateway trio (ingestion+stats+sweeper) **16 passed** with
+  the sweeper task live in the lifespan (no regression). Anchor commit e48428e (user handles git).

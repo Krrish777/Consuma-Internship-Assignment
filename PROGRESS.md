@@ -4,14 +4,16 @@
 > Structured feature status lives in `feature_list.json` (see CLAUDE.md). Decisions: `docs/DECISIONS.md` + `docs/SPEC.md §4, §6`.
 
 ## Current State
-- Phase: **Phase 4 — Worker pipeline COMPLETE** (docs/features/04-worker.md fully exhausted).
-  Phases 0–3 complete.
-- Active card: **none** — all 12 worker BOM cards (X1/X2/X3/W1/W2/W3/W4/W5/W5b/W7/X7/H-SSRF) `passing`; WIP=0.
-- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (64 files) + 106 unit tests.
+- Phase: **Phase 5 — Gateway completion COMPLETE** (docs/features/05-gateway.md fully exhausted).
+  Phases 0–4 complete.
+- Active card: **none** — all 3 gateway BOM cards (G7/R5.1, G8/R3.4, H13) `passing`; WIP=0.
+- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (67 files) + 106 unit tests.
 - Integration tests (Docker up, real pg+rmq+redis+minio): per-card L3 all green —
-  worker_bootstrap 2, parse 5, tts 3, dlq_resolver 3, stitch 3, webhook 3 (+ pre-existing models/broker/
-  storage/redis/topology/ingestion). New `tests/integration/conftest.py` starts all four containers once
-  per session (`worker_stack`) and builds a fresh `WorkerContext` per test.
+  **Phase 5:** stats 3, ingestion 9 (incl. 2 H13), sweeper 4; full gateway trio (ingestion+stats+sweeper)
+  16 passed with the sweeper task live in the lifespan (no regression).
+  **Phase 4 (still green):** worker_bootstrap 2, parse 5, tts 3, dlq_resolver 3, stitch 3, webhook 3
+  (+ pre-existing models/broker/storage/redis/topology). New `tests/integration/conftest.py` starts all
+  four containers once per session (`worker_stack`) and builds a fresh `WorkerContext` per test.
 - **Phase-4 L3/L4 split:** handler logic is verified at L3 (direct handler invocation against real
   containers). The genuinely-L4 probes (docker kill mid-job → redeliver; live poison → DLQ-after-3) stay
   with their Phase-6 `R3.x` owners; each card's evidence states the split (no required level silently skipped).
@@ -92,6 +94,18 @@
 - [x] W5b — `_notify` in stitch.py: log-only if no allowlist, else SSRF guard + httpx post; failure swallowed (MUST #8); 3 L3 tests
 - New `core/infra/queries.py` helpers: `advance_status`, `fail_task_and_decrement` (W7), `finalize_job` (W5)
 
+### Phase 5 — Gateway completion (all passing; L3 testcontainers, Docker required) — anchor e48428e
+- [x] G7 / R5.1 — `GET /stats`: `StatsResponse{jobs:dict[str,int]}` over B6 `job_counts_by_status` (SQL GROUP BY),
+      zero-filled across all 6 FSM states for a stable shape; read-only. Queue depths deliberately omitted
+      (kept robust). 3 L3 tests (test_stats.py).
+- [x] H13 — manuscript size guard: `guard_manuscript_size` HTTP middleware checks `Content-Length` BEFORE the
+      body is buffered into the pydantic model (route-level len() would be too late to prevent OOM); oversized →
+      machine-readable 413 JSON. 2 new L3 tests in test_ingestion.py (9 total).
+- [x] G8 / R3.4 ⭐ — PENDING-sweeper: `gateway/sweeper.py` `sweep_once` re-publishes JobCreated for jobs stuck
+      PENDING past `PENDING_TIMEOUT_S` (DB-side now() cutoff, select job_ids only, NEVER mutates status); safe
+      only because parse is idempotent (H2/H15). `run_sweeper` loops it (sleep-first), launched as an asyncio.Task
+      in the gateway lifespan, cancelled cleanly on shutdown. 4 L3 tests (test_sweeper.py).
+
 ### Tests (43 unit + integration)
 - `tests/unit/` — 37 tests (architecture, error_handlers, events, health, logging, schemas, smoke, state_machine)
 - `tests/integration/test_ingestion.py` — 7 tests (lifespan, POST /jobs ×4, GET /status ×2)
@@ -100,15 +114,17 @@
 - `tests/integration/test_storage.py` — MinIO: idempotent bucket, text/bytes roundtrip, list_prefix, key_exists
 
 ## In Progress
-- **none** — WIP=0. Phase 4 worker pipeline complete (all 12 BOM cards passing). Next phase is Gateway
-  completion (/stats, sweeper) and/or the Phase-6 L4 e2e probes.
+- **none** — WIP=0. Phase 5 gateway completion complete (all 3 BOM cards passing). Next phase is the
+  Phase-6 L4 e2e probes.
 
 ## What's Genuinely Unbuilt (FEATURES.md scope)
-Phases 0–4 built (foundation, domain logic, Redis coordination, DB query layer, worker pipeline). The full
-parse→TTS→stitch choreography + DLQ resolver + webhook now run end-to-end at L3. Remaining:
-- Phase 5 Gateway completion: `GET /stats` (G7/B6 — `job_counts_by_status` exists, needs the endpoint +
-  zero-fill); PENDING-sweeper (G8/R3.4 — re-publishes JobCreated for jobs stuck PENDING; reaper that calls
-  `Semaphore.reap()` + `purge_processed_events()` periodically — both are primitives, not self-scheduling).
+Phases 0–5 built (foundation, domain logic, Redis coordination, DB query layer, worker pipeline, gateway
+completion). The full parse→TTS→stitch choreography + DLQ resolver + webhook + /stats + PENDING-sweeper now
+run end-to-end at L3. Remaining:
+- **Still deferred (optional primitives, not yet scheduled):** `Semaphore.reap()` (worker-side lease reaper)
+  and `purge_processed_events()` (H10 inbox retention) remain primitives — nothing calls them periodically.
+  G8's `run_sweeper` was kept to re-publish only (every added line tested); folding retention into it is the
+  documented optional follow-up. `reap()` belongs in the worker bootstrap, not the gateway sweeper.
 - Phase 6 L4 e2e/behavior probes (the rung cards R3.1/R3.2/R3.3/R4.1/R4.2/R4.3 `not_started`): crash-recovery
   (docker kill mid-job → redeliver), duplicate-delivery, poison-pill (live DLQ-after-3), semaphore, cache.
   These are the L4 owners of behaviors the Phase-4 cards verified at L3.
@@ -116,13 +132,13 @@ parse→TTS→stitch choreography + DLQ resolver + webhook now run end-to-end at
 - Phase 8 Architecture-defense docs: DOC1 (document the W7 DLQ policy), DOC2.
 
 ## Next Steps
-1. **Phase 5 — Gateway completion** (likely next file): `GET /stats` endpoint over `job_counts_by_status`
-   (B6) with zero-fill of all six FSM states (R5.1/G7); the PENDING-sweeper (G8/R3.4) + a periodic reaper
-   wiring `Semaphore.reap()` and `purge_processed_events()` into the worker bootstrap or a small scheduler.
-2. **Phase 6 — L4 e2e probes** (needs `make e2e` + the full compose stack): build `tests/e2e/` for R3.1
+1. **Phase 6 — L4 e2e probes** (needs `make e2e` + the full compose stack): build `tests/e2e/` for R3.1
    (docker kill mid-job → redeliver, no loss), R3.2 (duplicate delivery → exactly-once effect), R3.3 (poison
    → DLQ-after-3, healthy traffic unblocked — honor the R2.0 single-`VendorError` reconciliation), R4.1/4.2/4.3.
    The worker handlers are L3-proven; e2e wires them through the live broker under fault injection.
+2. **Optional reaper scheduling:** wire `Semaphore.reap()` into the worker bootstrap and (optionally) fold
+   `purge_processed_events()` into `run_sweeper` as a second periodic chore — both primitives exist + are
+   tested; only the scheduling glue remains.
 3. **DOC1 (Phase 8):** write up the W7 DLQ resolver policy (partial-drama: FAILED block + barrier resolves;
    alternative hard-fail). The decision is already implemented + recorded in DECISIONS 2026-06-25 "Phase 4".
 
@@ -132,9 +148,10 @@ parse→TTS→stitch choreography + DLQ resolver + webhook now run end-to-end at
   {parse,tts,stitch,dlq}.py` + `bootstrap.py`/`dispatch.py`/`errors.py`/`ssrf.py` are all wired and L3-tested.
   The parse handler wraps `simulate_parse` with `await asyncio.sleep(0)` (latency stand-in; fault logic stays
   pure in core/domain).
-- **Reaper/retention still not scheduled (Phase 5 gap):** `build_context` calls `ensure_slots()` once, but
-  nothing yet calls `Semaphore.reap()` or `purge_processed_events()` periodically — they remain primitives
-  awaiting a scheduler in the worker bootstrap / sweeper.
+- **Reaper/retention still not scheduled:** the gateway PENDING-sweeper (G8) IS now scheduled (asyncio.Task
+  in the lifespan), but `build_context` still calls `Semaphore.reap()` / `purge_processed_events()` nowhere
+  periodically — they remain tested primitives awaiting a scheduler (reap in the worker bootstrap; purge
+  optionally folded into `run_sweeper`). G8 deliberately re-publishes only, so every added line stayed tested.
 - **Known edge (W7/B4):** `complete_task_and_decrement` guards only `status != 'DONE'`; a DLQ-failed task
   followed by a late TTS success could double-decrement (harmless — StitchReady already fired). The realistic
   flow can't hit it; left B4 untouched rather than refactor a passing card. See DECISIONS 2026-06-25 "Phase 4".
