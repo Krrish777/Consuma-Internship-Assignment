@@ -84,9 +84,9 @@
       "id": "R2.0",
       "rung": 2,
       "behavior": "Vendor simulation & fault injection (the probe substrate per SPEC 1-2): simulate parse/TTS vendor calls with asyncio.sleep + seedable randomized failure. Parse injects a 15% 500-error rate (transient -> exercises retry). A deterministic 'poison' manuscript always fails (-> exercises DLQ after 3). Seedable so failure behavior is unit-assertable.",
-      "verification": ["uv run pytest tests/unit -k fault_injection (rate=0.0 never fails; rate=1.0 always fails; fixed seed reproducible; poison manuscript always raises; pure, no Docker)"],
+      "verification": ["uv run pytest tests/unit -k fault_injection (rate=0.0 never fails; rate=1.0 always fails; fixed seed reproducible; poison manuscript always raises SAME retryable VendorError; parse returns D3 blocks; tts keyed on D4 hash; pure, no Docker)"],
       "status": "passing",
-      "evidence": "uv run pytest tests/unit -k fault_injection -> 12 passed; vendor.py + test_fault_injection.py staged; commit ed6693e HEAD"
+      "evidence": "RECONCILED per SPEC §1 (poison = consistently-failing -> DLQ after 3 retries, single retryable VendorError; rejected card's non-retryable PoisonError -> see docs/DECISIONS.md 2026-06-25 R2.0). vendor.py re-scoped: stays in core/domain (no _sim.py), composes D3 split_blocks + D4 content_hash (removed divergent per-line splitter + inline sha256). uv run pytest tests/unit -k fault_injection -> 10 passed; full gate: ruff+fmt clean, mypy 43 files 0 errors, pytest tests/unit 82 passed; commit 0aff00f HEAD anchor (user handles git)"
     },
     {
       "id": "R2.1",
