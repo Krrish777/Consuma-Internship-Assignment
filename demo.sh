@@ -132,7 +132,7 @@ for arg in "$@"; do
   esac
 done
 
-printf "%s\n  Consuma Audio Engine — resilience demo\n  \"The audio drama is a costume; this is a distributed-systems reliability test.\"\n%s\n" "$BOLD" "$RESET"
+printf "%s\n  Consuma Internship Assignment\n%s\n" "$BOLD" "$RESET"
 ensure_stack
 
 case "$SCENARIO" in
