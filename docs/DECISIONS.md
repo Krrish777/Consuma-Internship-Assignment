@@ -340,3 +340,50 @@ each card's evidence states its L3/L4 split explicitly (no level silently skippe
 - **Verified:** `harness_smoke` 1 passed (live stack); `make check` green (ruff+fmt, mypy 70 files, 106 unit).
   Fixes touch `services/worker/pyproject.toml`, `services/gateway/src/gateway/main.py` (R2.2a lifespan), `uv.lock`.
   commit 700e587 base; fixes uncommitted (user handles git).
+
+### 2026-06-25 · Phase 6 — L4 e2e probe suite (06-e2e.md exhausted; R3.1/3.2/3.3, R4.1/4.2/4.3, E-EDGE, T-BEHAVIOR)
+- **What:** built the full L4 probe suite driving the REAL compose stack (14 tests, all green in one
+  `uv run pytest -m e2e` run, 78s, no cross-test interference). Each probe written test-first against the live
+  stack; the harness (T1) caught the httpx + schema deploy bugs above before any probe could run.
+- **Recurring constraint — the instant sim.** The only vendor latency is `asyncio.sleep(0)`, so a job
+  processes in milliseconds. Any probe that needs to act "mid-job" cannot be timed deterministically without
+  racing. The discipline applied throughout: replace racy mid-flight timing with a **deterministic structural
+  proof**, and document the L3 coverage of the timing-dependent path. This is honest, not a shortcut — a racy
+  test that usually-passes proves less than a deterministic one that always means what it says.
+- **R3.1 crash recovery:** kill the worker *before* submit (not mid-handler), assert the job stays PENDING
+  across the outage (durable queue, no loss), then recover the worker and assert COMPLETED + asset +
+  pending_count 0. The in-flight unacked-redelivery (ack-last) path is L3-proven (B4 claim, W4 H-EMIT, W5 H5).
+- **R3.2 duplicate delivery:** inject the SAME event twice on the live broker (new `publish_raw` fixture);
+  assert DURABLE DB truth (exactly N task rows via parse ON CONFLICT; no negative counter via B4's conditional
+  claim) — corruption would show as extra rows / negative pending_count, which /status alone wouldn't reveal.
+- **R3.3 poison/DLQ:** healthy + poison submitted together; healthy COMPLETE while poison is still in its
+  1/4/16s backoff -> proves no HOL (the ladder rides TTL'd delay queues off q.parse); poison -> q.dlq -> W7 ->
+  FAILED. Flake-safe (a healthy job DLQs only on 4 consecutive 15% losses, ~0.05%).
+- **R4.1 global semaphore:** with `--scale worker=4`, `LLEN tts:slots == 3` (NOT 4×3) is the deterministic
+  proof the semaphore is global and X4 ensure_slots is atomic/idempotent across workers; burst drains, tokens
+  return. Live-peak sampling is impossible under sleep(0); the ≤3 bound is STRUCTURAL (BLPOP on a 3-token pool)
+  and live-peak + X5 reclaim are L3-proven. Also covers I4.
+- **R4.2 cache+fan-in:** identical blocks share one content-addressed `audio_key` (== `tts/<block_hash>.wav`,
+  keyed on content NOT task_id — the named trap), distinct blocks differ, and the fan-in still counts every
+  task to COMPLETED. The "one vendor call" cost property is L3-proven (call counter).
+- **R4.3 stitch+webhook:** happy path -> `out/<job>.mp3`; a job with an undeliverable `callback_url` still
+  COMPLETEs (MUST #8). Webhook *delivery* is NOT testable at L4 here: H-SSRF correctly rejects every
+  private/loopback IP, and in a hermetic compose stack every reachable sink (container, host.docker.internal)
+  is private -> delivery needs an external public endpoint (out of scope); delivery + failure-swallow are
+  L3-proven (test_webhook, SSRF mocked). Default empty WEBHOOK_ALLOWLIST = log-only.
+- **E-EDGE battery:** 0-block terminates (fan-in of 0 doesn't hang), 1-block completes, all-cache-hit (job2 over
+  job1's cached blocks reuses the exact assets), and a **MinIO bounce** mid-job converges (MinIO is persistent;
+  the retry ladder rides out the outage). parse-crash-no-dup-tasks is covered by R3.2 + L3 test_parse_redelivery.
+- **⚠ Real resilience gap found (Redis bounce):** compose **Redis has no volume** and `Semaphore.ensure_slots`
+  runs **only on worker boot**, so a `docker restart redis` wipes `tts:slots` (and the init marker) and the
+  semaphore is **stranded** (BLPOP on an empty pool) until a worker reboots — a running worker never re-seeds.
+  Deliberately NOT exercised as a probe (it would hang, not fail cleanly). **Fix options (follow-up):** re-seed
+  via `ensure_slots` on Redis-reconnect, run a periodic seed/reaper, or give Redis an AOF volume. This is the
+  honest counterpart to the golden rule "Redis is safe to lose" — today it is *not* safe to lose without a
+  worker bounce. Logged here so it's a known, deliberate gap rather than a silent bug.
+- **T-BEHAVIOR:** the deterministic fake audio (`b"FAKE_AUDIO:"+content_hash`) lets us assert the EXACT bytes:
+  `out/<job>.mp3 == b"".join(tts_fake_audio(b) for b in split_blocks(manuscript))` in block order, plus
+  Postgres (DONE tasks + final_key) and MinIO (raw/tts/out keys) agree — correctness, not just status.
+- **Verified:** `uv run pytest -m e2e` -> **14 passed in 78s** (single full-suite run, no interference);
+  `make check` green (ruff+fmt, mypy 70 files, 106 unit). New files: tests/e2e/{conftest,helpers}.py +
+  8 probe modules. commit 700e587 base; all Phase-6 work uncommitted (user handles git).

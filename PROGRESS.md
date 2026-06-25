@@ -4,9 +4,18 @@
 > Structured feature status lives in `feature_list.json` (see CLAUDE.md). Decisions: `docs/DECISIONS.md` + `docs/SPEC.md §4, §6`.
 
 ## Current State
-- Phase: **Phase 5 — Gateway completion COMPLETE** (docs/features/05-gateway.md fully exhausted).
-  Phases 0–4 complete.
-- Active card: **none** — all 3 gateway BOM cards (G7/R5.1, G8/R3.4, H13) `passing`; WIP=0.
+- Phase: **Phase 6 — L4 e2e probe suite COMPLETE** (docs/features/06-e2e.md fully exhausted).
+  Phases 0–5 complete.
+- Active card: **none** — all Phase-6 probes passing (T1, R3.1, R3.2, R3.3, R4.1, R4.2, R4.3, E-EDGE,
+  T-BEHAVIOR) + the R2.3 parse rung-row reconciled; WIP=0.
+- **L4 e2e: `uv run pytest -m e2e` → 14 passed in 78s** (single full-suite run against the live compose stack,
+  no cross-test interference). Probes drive the REAL stack: POST to localhost:8000, poll /status, inject raw
+  duplicate events on the broker, `docker kill`/`restart`/`--scale` containers under fault injection.
+- **Two real deploy bugs the live stack exposed + fixed** (L3 could not see them): (1) `httpx` was missing from
+  `services/worker` runtime deps → the worker crash-looped on import (added `httpx>=0.27`, re-locked);
+  (2) nothing created the schema in the compose Postgres (`init.sh` never migrated; no real Alembic migration
+  exists) → `POST /jobs` 500'd `relation "jobs" does not exist` → added idempotent `create_tables` to the
+  gateway lifespan (single schema owner). The real `./init.sh` deployment now works end-to-end.
 - `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (67 files) + 106 unit tests.
 - Integration tests (Docker up, real pg+rmq+redis+minio): per-card L3 all green —
   **Phase 5:** stats 3, ingestion 9 (incl. 2 H13), sweeper 4; full gateway trio (ingestion+stats+sweeper)
@@ -113,9 +122,24 @@
 - `tests/integration/test_models.py` — Job CRUD, Task constraints, ProcessedEvent ON CONFLICT dedup
 - `tests/integration/test_storage.py` — MinIO: idempotent bucket, text/bytes roundtrip, list_prefix, key_exists
 
+### Phase 6 — L4 e2e probe suite (all passing; needs Docker + full compose stack) — base 700e587
+- [x] T1 — `tests/e2e/{conftest,helpers}.py`: `stack` (up -d --build + health-poll; guarantees CURRENT code),
+      `client`, `wait_for_status`, `publish_raw`, `db_engine`, `redis_client`, `minio_client`; harness_smoke green.
+- [x] R3.1 — crash recovery: kill worker before submit → stays PENDING across outage → recover → COMPLETED
+      (deterministic; in-flight redelivery is L3-proven). `test_crash_recovery.py`.
+- [x] R3.2 — duplicate delivery: same JobCreated/TtsRequested twice → exactly N rows, no negative counter
+      (durable DB assertions). `test_duplicate_delivery.py`.
+- [x] R3.3 — poison/DLQ: poison → DLQ after 1/4/16s → W7 FAILED; healthy jobs unblocked (no HOL). `test_poison_pill.py`.
+- [x] R4.1 — global semaphore: 4 workers share `LLEN tts:slots==3` (not 12); burst drains; covers I4. `test_semaphore.py`.
+- [x] R4.2 — cache+fan-in: identical blocks share one content-addressed audio_key; fan-in counts each. `test_cache_fanin.py`.
+- [x] R4.3 — stitch+webhook: out/<job>.mp3 produced; undeliverable callback still COMPLETEs (MUST #8). `test_stitch_webhook.py`.
+- [x] E-EDGE — 0/1-block, all-cache-hit, MinIO-bounce convergence. `test_edge_cases.py`.
+- [x] T-BEHAVIOR — exact-bytes correctness + Postgres/MinIO consistency. `test_behavior.py`.
+- [x] R2.3 — parse-handler rung-row reconciled to passing (same L3 verify as W3).
+
 ## In Progress
-- **none** — WIP=0. Phase 5 gateway completion complete (all 3 BOM cards passing). Next phase is the
-  Phase-6 L4 e2e probes.
+- **none** — WIP=0. Phase 6 L4 e2e complete (all probes passing; 14 e2e green in one run). Next phase is
+  Phase 7 (infra verification) or Phase 8 (architecture-defense docs).
 
 ## What's Genuinely Unbuilt (FEATURES.md scope)
 Phases 0–5 built (foundation, domain logic, Redis coordination, DB query layer, worker pipeline, gateway
@@ -125,24 +149,31 @@ run end-to-end at L3. Remaining:
   and `purge_processed_events()` (H10 inbox retention) remain primitives — nothing calls them periodically.
   G8's `run_sweeper` was kept to re-publish only (every added line tested); folding retention into it is the
   documented optional follow-up. `reap()` belongs in the worker bootstrap, not the gateway sweeper.
-- Phase 6 L4 e2e/behavior probes (the rung cards R3.1/R3.2/R3.3/R4.1/R4.2/R4.3 `not_started`): crash-recovery
-  (docker kill mid-job → redeliver), duplicate-delivery, poison-pill (live DLQ-after-3), semaphore, cache.
-  These are the L4 owners of behaviors the Phase-4 cards verified at L3.
-- Phase 7 Infra verification: I1–I4, H-DANGLE.
-- Phase 8 Architecture-defense docs: DOC1 (document the W7 DLQ policy), DOC2.
+- Phase 6 L4 e2e/behavior probes: **DONE** (all passing; `uv run pytest -m e2e` → 14 passed).
+- Phase 7 Infra verification: I1–I4, H-DANGLE, H-PREFETCH (mostly verify + small fixes; I1/I3 partly satisfied
+  now that `./init.sh` brings up a working stack with the schema-on-boot fix).
+- Phase 8 Architecture-defense docs: DOC1 (correct SPEC §4 + log the 7 corrections), DOC2 (`ARCHITECTURE.md`).
+- **Resilience follow-up (found in Phase 6 E-EDGE):** a Redis bounce strands the TTS semaphore (Redis has no
+  volume; `ensure_slots` is boot-only). Fix = re-seed on Redis-reconnect, or a periodic seed/reaper, or AOF.
 
 ## Next Steps
-1. **Phase 6 — L4 e2e probes** (needs `make e2e` + the full compose stack): build `tests/e2e/` for R3.1
-   (docker kill mid-job → redeliver, no loss), R3.2 (duplicate delivery → exactly-once effect), R3.3 (poison
-   → DLQ-after-3, healthy traffic unblocked — honor the R2.0 single-`VendorError` reconciliation), R4.1/4.2/4.3.
-   The worker handlers are L3-proven; e2e wires them through the live broker under fault injection.
-2. **Optional reaper scheduling:** wire `Semaphore.reap()` into the worker bootstrap and (optionally) fold
-   `purge_processed_events()` into `run_sweeper` as a second periodic chore — both primitives exist + are
-   tested; only the scheduling glue remains.
-3. **DOC1 (Phase 8):** write up the W7 DLQ resolver policy (partial-drama: FAILED block + barrier resolves;
-   alternative hard-fail). The decision is already implemented + recorded in DECISIONS 2026-06-25 "Phase 4".
+1. **Phase 7 — Infra verification** (`07-infra.md`): I1 (`./init.sh` → 6 healthy, MinIO healthcheck), I2
+   (Dockerfiles build), I3 (init.sh e2e smoke — now feasible since schema-on-boot fixed ingestion), I4 (scale=4
+   shares one semaphore — already shown by R4.1), H-DANGLE (object TTL ≥ cache TTL), H-PREFETCH (re-confirm).
+2. **Phase 8 — Architecture-defense docs** (`08-docs.md`): DOC1 corrects SPEC §4 (7 corrections) + appends
+   DECISIONS; DOC2 = `ARCHITECTURE.md` defending each boundary + the four-seam transactional story, each claim
+   mapped to a passing Phase-6 probe (now that they exist). High rubric value, cheap to write.
+3. **Optional follow-ups:** the Redis-bounce semaphore re-seed (above); schedule `Semaphore.reap()` (worker
+   bootstrap) + fold `purge_processed_events()` into `run_sweeper`.
 
 ## Known Issues / Gaps
+- **⚠ Redis-bounce strands the TTS semaphore (found Phase-6 E-EDGE):** compose Redis has no volume and
+  `Semaphore.ensure_slots` runs only on worker boot, so `docker restart redis` wipes `tts:slots` + the init
+  marker and a running worker never re-seeds → BLPOP blocks forever. Deliberately not probed (would hang).
+  Fix: re-seed on Redis-reconnect / periodic seed / AOF volume. See DECISIONS 2026-06-25 "Phase 6".
+- **Deploy fixes (Phase 6):** `httpx>=0.27` added to `services/worker` deps (was crash-looping); gateway
+  lifespan now runs idempotent `create_tables` on startup (compose Postgres had no schema; no real Alembic
+  migration exists — `metadata.create_all` is the accepted simulation simplification). See DECISIONS "Phase 6".
 - **Arch review 2026-06-24:** 13 hardening holes; full traces in `tmp/ARCH-REVIEW-2026-06-24.md` and `BACKLOG.md`. The FEATURES.md card spine folds every fix into its owning card — do NOT build without those constraints.
 - Worker pipeline body: **complete** (Phase 4). `worker/main.py` runs a real consume loop; `handlers/
   {parse,tts,stitch,dlq}.py` + `bootstrap.py`/`dispatch.py`/`errors.py`/`ssrf.py` are all wired and L3-tested.
