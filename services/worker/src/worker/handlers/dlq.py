@@ -1,4 +1,4 @@
-"""W7 — DLQ → fan-in resolver (H4) (spec §9).
+"""DLQ → fan-in resolver.
 
 A poison message that exhausts the retry ladder lands on ``q.dlq``. For a TTS
 block that means the fan-in barrier would never be decremented and the job would
@@ -6,7 +6,7 @@ block that means the fan-in barrier would never be decremented and the job would
 so healthy ``q.tts`` traffic is never blocked (no head-of-line) — resolves the
 barrier.
 
-Policy (recommended; documented in DOC1):
+Policy (recommended):
   * **TTS poison** (body has ``task_id``): mark that task ``FAILED`` and decrement
     the barrier (``fail_task_and_decrement``). If the decrement reaches 0, emit
     ``StitchReady`` — the job still completes, as a *partial* drama; the stitch

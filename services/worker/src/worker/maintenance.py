@@ -1,4 +1,4 @@
-"""Worker background maintenance loops (H1 — semaphore re-seed).
+"""Worker background maintenance loops (semaphore re-seed).
 
 These loops keep the *ephemeral* Redis coordination state self-healing, honoring
 the golden rule that Redis is "safe to lose": the durable truth lives in Postgres,
@@ -17,7 +17,7 @@ pool the marker is present and the call is a no-op, so only a genuinely wiped po
 
 ``run_reaper`` schedules ``Semaphore.reap()`` — the owner-checked atomic Lua step
 that returns a crashed holder's orphaned token to the pool exactly once. Its
-reclaim logic is already L3-proven (X5); without a periodic caller, though, a dead
+reclaim logic is already L3-proven; without a periodic caller, though, a dead
 holder's slot only comes back if someone happens to reap, so a crash would shrink
 the effective pool until the next reboot. The ⅓-TTL heartbeat keeps a live-but-slow
 holder's lease fresh, so a periodic reaper only ever reclaims genuinely-dead ones.

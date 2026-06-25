@@ -101,7 +101,7 @@ async def handle_tts(ctx: WorkerContext, event: TtsRequested) -> None:
         else await _synthesize(ctx, h, audio_key, block_text, owner=task_id)
     )
 
-    # Atomic, idempotent fan-in (B4): durable claim + UPDATE … RETURNING.
+    # Atomic, idempotent fan-in: durable claim + UPDATE … RETURNING.
     async with get_session(ctx.engine) as session:
         remaining = await complete_task_and_decrement(session, job_id, task_id, audio_key)
 
@@ -109,7 +109,7 @@ async def handle_tts(ctx: WorkerContext, event: TtsRequested) -> None:
         await broker.publish(ctx.exchange, StitchReady(job_id=job_id), routing_key=Q_STITCH)
         log.info("job %s: barrier reached 0 → StitchReady emitted", job_id)
     elif remaining is None:
-        # H-EMIT: duplicate delivery. The barrier may already be 0 with the
+        # duplicate delivery. The barrier may already be 0 with the
         # StitchReady lost to a crash; re-read and re-emit if so (stitch is idempotent).
         async with get_session(ctx.engine) as session:
             job = await session.get(Job, job_id)

@@ -1,6 +1,6 @@
-"""H-SSRF — callback URL guard (CLAUDE.md security; SPEC §3 edge).
+"""Callback URL guard.
 
-A client-supplied ``callback_url`` POSTed by the webhook (W5b) is a Server-Side
+A client-supplied ``callback_url`` POSTed by the webhook is a Server-Side
 Request Forgery vector: a caller could aim it at internal services or a cloud
 metadata endpoint (169.254.169.254). :func:`is_allowed` is the gate.
 
