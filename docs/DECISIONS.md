@@ -166,3 +166,48 @@
   caching by `task_id` (conflates cost-cache with counter — the named junior trap).
 - **Verified:** `make check` green (ruff + ruff format + mypy --strict 44 files + 82 unit); integration
   `-k "redis or models"` → 24 passed. Anchor commit 6203aeb (user handles git).
+
+## 2026-06-25 · Phase 3 DB query layer complete (B4 fan-in, H15 counter-init, B6 stats)
+
+The atomic query operations the worker handlers will call now live in `core/infra/queries.py`
+(kept separate from `db.py` schema, per the card). All L3-verified against real postgres:17-alpine.
+
+- **B4 — the fan-in barrier is two statements in ONE transaction.** `complete_task_and_decrement`
+  does a durable conditional claim (`UPDATE tasks SET status='DONE', audio_key WHERE task_id AND
+  status<>'DONE'`) and, only on rowcount 1, an atomic `UPDATE jobs SET pending_count=pending_count-1
+  RETURNING`. The dup-guard IS the in-transaction claim (H3), never a Redis SETNX — an evictable guard
+  would let a redelivery double-decrement, cross the barrier early, and mark an incomplete drama
+  COMPLETED. The decrement is SQL-level (never read-subtract-write). Verified: 8 concurrent decrements
+  across separate sessions return a clean permutation of 0..7 (Postgres row-lock serialises the contended
+  jobs row), exactly one caller sees 0; the same task delivered twice decrements once. Dimension: State ⭐.
+
+- **H15 target is PENDING→PARSING, not PENDING→GENERATING.** The card title says "GENERATING" but the
+  FSM (`state.py` `LEGAL`) makes PARSING the only legal successor of PENDING; the card's own api line
+  hedges "PARSING/GENERATING". Resolved in favour of the tested FSM authority: `begin_parse` does the
+  PENDING→PARSING CAS and seeds `pending_count=N` only on rowcount 1. A redelivered parse finds the job
+  already advanced (rowcount 0 = the normal H-FSM concurrent outcome) and the `WHERE status=PENDING`
+  clause makes the counter physically unreachable for a reset — an in-flight (decremented) counter is
+  never resurrected. The PARSING→GENERATING advance is a separate Phase-4 transition after the fan-out.
+
+- **B6 is a SQL GROUP BY; zero-fill deferred to G7.** `job_counts_by_status` aggregates in the DB
+  (`select(Job.status, func.count()).group_by(Job.status)`), never loads rows to count in Python.
+  Statuses with zero jobs are absent (GROUP BY semantics); zero-filling all six FSM states into a stable
+  JSON shape is a presentation concern owned by the /stats endpoint (G7), not this query.
+
+- **Testing note — baseline-delta for aggregates.** The integration DB is a shared module-scoped
+  container and tables aren't truncated between tests, so the `jobs` table carries rows from other tests.
+  B6's test asserts per-status *deltas* against a pre-seed baseline rather than absolute totals — the
+  robust way to test a global aggregate against a polluted shared fixture.
+
+- **mypy --strict notes:** reused the `cast("CursorResult[Any]", ...)` pattern from `db.py` for
+  `.rowcount` on UPDATEs; a test variable reused for both `Job(...)` and `session.get(Job, …)` (→
+  `Job | None`) is a type conflict — use distinct names (`job` vs `refreshed`).
+
+- **Rejected:** a Python counter / read-subtract-write for the fan-in (lost-update race under
+  redelivery); Redis SETNX as the dup-guard authority (H3 — ephemeral guarding durable truth);
+  unconditional `UPDATE jobs SET pending_count=N` on every parse delivery (H15 — resurrects decremented
+  tasks → job hangs); loading all jobs into Python to count (B6 — defeats the index/GROUP BY).
+
+- **Verified:** `make check` green (ruff + ruff format + mypy --strict 45 files + 82 unit); integration
+  `-k models` → 13 passed (6 pre-existing + 3 B4 fan_in + 3 H15 counter_once + 1 B6 stats). Anchor commit
+  b891a95 (user handles git).

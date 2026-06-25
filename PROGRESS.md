@@ -4,12 +4,13 @@
 > Structured feature status lives in `feature_list.json` (see CLAUDE.md). Decisions: `docs/DECISIONS.md` + `docs/SPEC.md §4, §6`.
 
 ## Current State
-- Phase: **Phase 2 — Redis coordination COMPLETE** (docs/features/02-redis.md fully exhausted). Phases 0–1 complete.
-- Active card: **none** — all 7 Redis BOM cards (R1, R2, X4, X5, R3, H8, R4inbox) `passing`; WIP=0.
-- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (44 files) + 82 unit tests.
-- Integration tests: **RE-RUN this session with Docker up** — `pytest tests/integration -k "redis or models"`
-  → 24 passed (real redis:7-alpine + postgres:17-alpine; Ryuk disabled via conftest.py). The 17 new Redis-layer
-  tests are L3 and gate the Phase-2 cards' `passing` state.
+- Phase: **Phase 3 — DB query layer COMPLETE** (docs/features/03-db-queries.md fully exhausted).
+  Phases 0–2 complete.
+- Active card: **none** — all 3 DB BOM cards (B4, H15, B6) `passing`; WIP=0. (Phase 2: R1/R2/X4/X5/R3/H8/R4inbox.)
+- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (45 files) + 82 unit tests.
+- Integration tests: **RE-RUN this session with Docker up** — `pytest tests/integration -k models`
+  → 13 passed (real postgres:17-alpine; Ryuk disabled via conftest.py). The 7 new query-layer tests
+  (3 B4 fan_in + 3 H15 counter_once + 1 B6 stats) are L3 and gate the Phase-3 cards' `passing` state.
 - **R2.0 divergence RESOLVED** (docs/DECISIONS.md 2026-06-25 R2.0): SPEC §1 wins — poison is a
   *consistently-failing* manuscript → DLQ after 3 retries via a SINGLE retryable `VendorError`.
 - **Phase 2 design notes** (docs/DECISIONS.md 2026-06-25 Phase 2): H8 stampede lock IMPLEMENTED (not the
@@ -63,6 +64,11 @@
 - [x] H8 — `Cache` in-flight stampede lock (`acquire_inflight`/`wait_for_cache`); 2 tests (anchor 6203aeb)
 - [x] R4inbox — durable `db.mark_event` (ON CONFLICT, authority) + `purge_processed_events` (H10) + Redis `seen_once` fast-path; 3 tests (anchor 6203aeb)
 
+### Phase 3 — DB query layer (all passing; L3 testcontainers, Docker required) — `core/infra/queries.py`
+- [x] B4 — `complete_task_and_decrement`: in-tx conditional task claim (H3 authority) + atomic `UPDATE jobs … pending_count-1 RETURNING`; 3 fan_in tests (anchor b891a95)
+- [x] H15 — `begin_parse`: PENDING→PARSING CAS seeding `pending_count=N` only on rowcount 1 (re-run never resets); 3 counter_once tests (anchor b891a95)
+- [x] B6 — `job_counts_by_status`: read-only `GROUP BY` per-status aggregate for /stats (G7); 1 stats test (anchor b891a95)
+
 ### Tests (43 unit + integration)
 - `tests/unit/` — 37 tests (architecture, error_handlers, events, health, logging, schemas, smoke, state_machine)
 - `tests/integration/test_ingestion.py` — 7 tests (lifespan, POST /jobs ×4, GET /status ×2)
@@ -74,9 +80,9 @@
 - **none** — WIP=0. Phase 2 Redis cards complete (all 7 passing). Next phase is the worker pipeline.
 
 ## What's Genuinely Unbuilt (FEATURES.md scope)
-Phases 0–2 built (foundation, domain logic, Redis coordination). The infra adapters are now ALL complete
-(db, broker, storage, redis). Remaining is the pipeline that composes them:
-- Phase 3 DB query layer: fan-in atomic UPDATE…RETURNING (B4), sweeper counter (H15), stats queries (B6)
+Phases 0–3 built (foundation, domain logic, Redis coordination, DB query layer). The infra adapters AND
+the atomic query ops are now complete (db, broker, storage, redis + `queries.py` fan-in/counter/stats).
+Remaining is the pipeline that composes them:
 - Phase 4 Worker pipeline: parse/TTS/stitch handlers (X1–X7, W1–W7) — broker topology + all adapters exist,
   but `worker/handlers/{parse,tts,stitch}.py` are still STUBS. This is where redis.Semaphore/Cache/seen_once,
   db.mark_event, and core.domain.vendor finally get wired into the choreography.
@@ -86,10 +92,14 @@ Phases 0–2 built (foundation, domain logic, Redis coordination). The infra ada
 - Phase 8 Architecture-defense docs: DOC1, DOC2
 
 ## Next Steps
-1. **Phase 3 / Phase 4 — DB query layer + Worker pipeline** (docs/features/03-*, 04-*): wire the now-complete
-   adapters into the parse→TTS→stitch choreography. The fan-in join (B4) MUST be atomic `UPDATE…RETURNING`
-   (never a Python counter); TTS handler MUST check `Cache.cache_get` BEFORE `Semaphore.acquire` (a hit burns
-   no token); consumers go through `mark_event` (authority) + `seen_once` (fast-path); ack LAST.
+1. **Phase 4 — Worker pipeline** (docs/features/04-worker.md): wire the now-complete adapters + `queries.py`
+   into the parse→TTS→stitch choreography. Build order by dependency: **X3** bootstrap (`worker/bootstrap.py`:
+   one wired context; call `ensure_slots()` once) → **X2** dispatch table (queue→handler) → **X1** run loop
+   (replace the idle `await asyncio.Future()`; clean SIGTERM) → then the handlers **W3 parse** (split_blocks →
+   `begin_parse` H15 → write N tasks → fan-out TtsRequested), **W4 tts** (`Cache.cache_get` BEFORE
+   `Semaphore.acquire` → vendor → MinIO → `cache_set` → `complete_task_and_decrement` B4 → emit StitchReady on
+   0), **W?/R4.3 stitch** (concat → COMPLETED → webhook). Invariants: ack LAST; consumers via `mark_event`
+   (authority) + `seen_once` (fast-path); NEVER inbox-skip parse (H2); 0-block job → STITCHING directly.
 2. **When R3.3 (DLQ e2e) is built**, honor the R2.0 reconciliation: poison routes through the retry ladder and
    dead-letters after 3 attempts (single `VendorError`), per SPEC §1 / DECISIONS 2026-06-25.
 3. **When the TTS handler / X3 worker bootstrap is built**, call `Semaphore.ensure_slots()` once on boot and
@@ -100,8 +110,10 @@ Phases 0–2 built (foundation, domain logic, Redis coordination). The infra ada
 - Worker pipeline body: worker/main.py is an idle skeleton; handlers/{parse,tts,stitch}.py are STUBS
   (docstring-only, no logic wired). The parse handler will wrap `core.domain.vendor.simulate_parse`
   with `asyncio.sleep` for latency (no separate `_sim.py` — fault logic stays pure in core/domain).
-- `core/infra/redis.py`: **now complete** (R1/R2/X4/X5/R3/H8 + `seen_once`). `db.py` gained `mark_event` +
-  `purge_processed_events` (R4inbox). The reaper (`Semaphore.reap`) and retention (`purge_processed_events`)
-  are primitives — a scheduler must call them (worker bootstrap / sweeper, Phase 4/5).
+- `core/infra/redis.py`: **complete** (R1/R2/X4/X5/R3/H8 + `seen_once`). `db.py` gained `mark_event` +
+  `purge_processed_events` (R4inbox). `core/infra/queries.py`: **now complete** (B4
+  `complete_task_and_decrement`, H15 `begin_parse`, B6 `job_counts_by_status`) — the Phase-4 handlers call
+  these. The reaper (`Semaphore.reap`) and retention (`purge_processed_events`) are primitives — a
+  scheduler must call them (worker bootstrap / sweeper, Phase 4/5).
 - `domain/text.py`, `domain/hash.py`: now exist (D3/D4 done).
 - `domain/models.py`: removed (F0.3).
