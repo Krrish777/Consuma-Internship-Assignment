@@ -1,4 +1,4 @@
-"""Structured logging with job_id trace key (spec §5, CLAUDE.md observability).
+"""Structured logging with job_id trace key (CLAUDE.md observability).
 
 `configure_logging()` sets up JSON-ish log formatting for the process.
 `get_logger(name)` returns a standard logger — callers use normal `log.info(...)`.

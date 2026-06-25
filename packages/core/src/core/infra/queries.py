@@ -1,10 +1,10 @@
-"""Atomic DB query operations the worker handlers call (Phase 3, spec §6).
+"""Atomic DB query operations the worker handlers call (Phase 3).
 
 These are the cross-boundary state operations that must stay correct under
 *concurrent redelivery* — the place where at-least-once delivery meets durable
 truth. They live in ``core/infra`` (I/O) and never in ``core/domain`` (the
 architecture test keeps the domain pure). The SQL guards are built to honour the
-H-FSM compare-and-set contract (``state.py``): ``rowcount`` is the authority and
+compare-and-set contract (``state.py``): ``rowcount`` is the authority and
 ``rowcount == 0`` is a *normal* concurrent outcome, not an error.
 """
 
@@ -22,7 +22,7 @@ from core.infra.db import Job, Task
 async def complete_task_and_decrement(
     session: AsyncSession, job_id: str, task_id: str, audio_key: str
 ) -> int | None:
-    """Fan-in barrier (B4) — durable in-tx dup-guard + atomic decrement.
+    """Fan-in barrier — durable in-tx dup-guard + atomic decrement.
 
     The single most grade-bearing mechanism: knowing when all N parallel TTS
     tasks are done. Two statements in ONE transaction:
@@ -32,7 +32,7 @@ async def complete_task_and_decrement(
        status<>'DONE'``. If its ``rowcount`` is 0 the task was already counted on
        a prior delivery, so we must NOT decrement again — return ``None``. This
        guard is the *authority*; it is durable and in the same transaction as the
-       decrement (H3). Guarding with Redis ``SETNX`` instead would be evictable —
+       decrement. Guarding with Redis ``SETNX`` instead would be evictable —
        eviction + redelivery → double-decrement → an early ``StitchReady`` → an
        incomplete drama wrongly marked ``COMPLETED``.
     2. **Atomic barrier decrement** — ``UPDATE jobs SET pending_count =
@@ -68,7 +68,7 @@ async def complete_task_and_decrement(
 
 
 async def fail_task_and_decrement(session: AsyncSession, job_id: str, task_id: str) -> int | None:
-    """DLQ fan-in resolver (W7/H4) — mark a poisoned task FAILED, then decrement.
+    """DLQ fan-in resolver — mark a poisoned task FAILED, then decrement.
 
     Same atomic shape as :func:`complete_task_and_decrement`, but it records the
     task as ``FAILED`` instead of ``DONE`` so a poisoned block still resolves the

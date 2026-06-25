@@ -1,11 +1,11 @@
-"""Async Postgres adapter — engine, session, ORM models (spec §5, §6).
+"""Async Postgres adapter — engine, session, ORM models.
 
 Models live here (core/infra), not core/domain, because SQLAlchemy is I/O;
 the architecture test enforces that core/domain stays pure. The JobStatus enum
 is imported from core/domain/state (pure) and mapped here via a native Postgres
 ENUM type so illegal values are rejected at the DB level too.
 
-Fan-in note (BACKLOG H3/H-FSM): pending_count updates and status transitions
+Fan-in note: pending_count updates and status transitions
 MUST use compare-and-set SQL, not Python read-then-write. This module provides
 the schema; handlers in worker/ own the atomic UPDATE … RETURNING logic.
 """
