@@ -458,8 +458,8 @@
       "rung": 4,
       "behavior": "Stitch & notify: concat chunks -> out/<job>.mp3 in MinIO, Job COMPLETED, fire webhook/log. Webhook failure does NOT fail the job.",
       "verification": ["make e2e -k stitch (full happy path -> COMPLETED + asset) AND -k webhook_failure_still_completed"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest -m e2e -k 'stitch or webhook_failure_still_completed' -> 2 passed in 18s against the LIVE stack. test_stitch_happy_path_produces_completed_asset: 3-block job -> COMPLETED with final_key starting 'out/' ending '.mp3' (W5 client-side concat asset). test_webhook_failure_still_completed: job with callback_url='http://sink.invalid/hook' still -> COMPLETED with asset (MUST #8 - notification best-effort, never fails the job). HONEST L3/L4 split: actual webhook DELIVERY ('received once') + attempted-then-swallowed failure are L3-proven (test_webhook, 3 tests, SSRF resolver mocked); not re-run at L4 because the H-SSRF guard correctly rejects every private/loopback IP and in a hermetic compose stack every reachable sink (container, host.docker.internal) is private -> real delivery needs an external public endpoint (out of hermetic scope); default empty WEBHOOK_ALLOWLIST = log-only. make check green (106 unit). commit 700e587 base (uncommitted; user handles git)."
     },
     {
       "id": "R5.1",
