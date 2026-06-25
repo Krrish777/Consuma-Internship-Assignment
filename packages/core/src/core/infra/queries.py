@@ -15,7 +15,7 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.domain.state import JobStatus
+from core.domain.state import JobStatus, expected_for
 from core.infra.db import Job, Task
 
 
@@ -97,6 +97,30 @@ async def begin_parse(session: AsyncSession, job_id: str, n_blocks: int) -> bool
         .values(status=JobStatus.PARSING, pending_count=n_blocks)
     )
     result = cast("CursorResult[Any]", await session.execute(cas))
+    await session.commit()
+    return result.rowcount == 1
+
+
+async def advance_status(session: AsyncSession, job_id: str, to_status: JobStatus) -> bool:
+    """Compare-and-set the job status to ``to_status`` (the H-FSM contract).
+
+    The ``WHERE status IN (expected_for(to_status))`` guard is built from the one
+    source of truth (``state.LEGAL``) so it can never drift from ``can_transition``.
+    ``rowcount`` is the authority:
+
+      * ``rowcount == 1`` → this worker won the transition; returns True.
+      * ``rowcount == 0`` → a *normal* concurrent outcome (someone already advanced
+        the job, or it is terminal), NOT an error; returns False. Handlers treat
+        False as "already handled" and proceed idempotently — never retry, never
+        mark the job FAILED on a lost CAS.
+    """
+    expected = expected_for(to_status)
+    stmt = (
+        update(Job)
+        .where(Job.job_id == job_id, Job.status.in_(expected))
+        .values(status=to_status)
+    )
+    result = cast("CursorResult[Any]", await session.execute(stmt))
     await session.commit()
     return result.rowcount == 1
 
