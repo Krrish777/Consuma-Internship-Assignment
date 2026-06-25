@@ -1,9 +1,19 @@
 """Worker entrypoint — aio-pika consume loop (spec §5, §8).
 
-Rung 0 boot: connect via the shared ``core.infra.broker`` adapter and declare the minimal
-durable topology, so the service is runnable under compose and proves broker connectivity.
-The consume loop with manual ack-LAST routing to handlers/{parse,tts,stitch} arrives in
-later rungs (the adapter's ``consume`` helper is ready for them).
+X1 replaces the Rung-0 idle skeleton with a real run loop:
+
+    build_context (X3) → register one consumer per queue (X2 dispatch) → await
+    shutdown → close_context.
+
+Each queue gets its OWN channel so prefetch can be sized per-queue (W1/H-PREFETCH:
+``set_qos`` is channel-wide, so q.tts needs a separate channel to run a smaller
+prefetch than q.parse). Manual ack (``no_ack=False``) is retained — the handler
+acks LAST, after its Postgres commit + downstream publish.
+
+Clean shutdown matters for crash-recovery (R3.1): on SIGTERM (compose ``docker
+stop``) the worker sets a shutdown event, stops consuming, and closes the broker
+connection, so any in-flight unacked message is released for redelivery rather
+than lost.
 
 Run by compose as: python -m worker.main
 """
@@ -11,27 +21,65 @@ Run by compose as: python -m worker.main
 from __future__ import annotations
 
 import asyncio
-import logging
+import signal
 
-from core.config import get_settings
 from core.infra import broker
+from core.infra.broker import Handler
+from core.infra.logging import get_logger
+from worker.bootstrap import WorkerContext, build_context, close_context
+from worker.dispatch import build_handlers
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("worker")
+log = get_logger("worker")
 
 
-async def main() -> None:
-    settings = get_settings()
-    log.info("worker booting; connecting to broker %s", settings.RABBITMQ_URL)
-    connection = await broker.connect(settings.RABBITMQ_URL)
+def _request_shutdown(shutdown: asyncio.Event) -> None:
+    """Signal-handler callback: ask the run loop to drain and exit."""
+    log.info("shutdown signal received; draining")
+    shutdown.set()
+
+
+def install_signal_handlers(loop: asyncio.AbstractEventLoop, shutdown: asyncio.Event) -> None:
+    """Wire SIGTERM/SIGINT to set the shutdown event (best-effort across platforms).
+
+    ``loop.add_signal_handler`` is the asyncio-clean path (POSIX, the worker's Linux
+    container). It is unsupported on Windows / outside the main thread, where we fall
+    back to the classic ``signal.signal`` handler.
+    """
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, _request_shutdown, shutdown)
+        except (NotImplementedError, RuntimeError):
+            signal.signal(sig, lambda *_: _request_shutdown(shutdown))
+
+
+async def register_consumers(ctx: WorkerContext, handlers: dict[str, Handler]) -> None:
+    """Register each handler on its queue, one dedicated channel per queue.
+
+    A per-queue channel lets prefetch be sized per queue (W1). Prefetch is uniform
+    here (X1); W1 sizes q.tts down toward the semaphore size (H-PREFETCH).
+    """
+    for queue_name, handler in handlers.items():
+        channel = await ctx.connection.channel()
+        queue = await channel.get_queue(queue_name)
+        await broker.consume(channel, queue, handler, prefetch=ctx.settings.PREFETCH)
+
+
+async def run() -> None:
+    """Bootstrap, register consumers, and run until a shutdown signal arrives."""
+    ctx = await build_context()
+    shutdown = asyncio.Event()
+    install_signal_handlers(asyncio.get_running_loop(), shutdown)
+
+    handlers = build_handlers(ctx)
+    await register_consumers(ctx, handlers)
+    log.info("worker running; consuming q.parse / q.tts / q.stitch")
+
     try:
-        channel = await connection.channel()
-        await broker.declare_minimal(channel)
-        log.info("worker connected; idle (no handlers wired yet — Rung 0 boot)")
-        await asyncio.Future()  # idle until the container is stopped
+        await shutdown.wait()
     finally:
-        await connection.close()
+        await close_context(ctx)
+        log.info("worker stopped cleanly")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run())
