@@ -1,4 +1,4 @@
-"""STAGE C — TTS handler (cache → slot → generate → fan-in) (spec §8, §9). ⭐
+"""TTS handler (Stage C) — cache → slot → generate → fan-in.
 
 For each ``TtsRequested`` (pointers: job_id + task_id):
 

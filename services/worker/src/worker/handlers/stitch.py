@@ -1,4 +1,4 @@
-"""STAGE D — Stitch handler (idempotent finalize) (spec §8, §9).
+"""Stitch handler (Stage D) — idempotent finalize.
 
 Consumes ``StitchReady``, concatenates the job's TTS chunks into a single
 ``out/<job>.mp3``, and marks the job COMPLETED. The webhook notification (W5b)

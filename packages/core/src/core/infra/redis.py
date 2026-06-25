@@ -97,14 +97,14 @@ async def ping(client: Redis) -> bool:
 
 
 async def seen_once(client: Redis, task_id: str, *, ttl: int = DEFAULT_SEEN_TTL) -> bool:
-    """Redis idempotency fast-path: True the FIRST time a task_id is seen, else False.
+    """Redis idempotency fast-path helper: True the FIRST time a task_id is seen, else False.
 
     ``SET task:done:<task_id> 1 NX EX`` — a cheap short-circuit for obviously duplicate
-    deliveries (True = first sighting → process; False = already seen → skip). This is
-    NON-authoritative (H3): the durable ``processed_events`` inbox (``db.mark_event``)
-    is the real guard. Redis is "safe to lose" — on a cold Redis this returns True
-    again, but the durable inbox still absorbs the duplicate. NEVER let this be the
-    thing protecting the fan-in counter.
+    deliveries. NON-authoritative and currently NOT on the hot path: the pipeline's
+    idempotency authority is the atomic state-CAS in ``core.infra.queries`` (durable,
+    in the same transaction as the effect it guards). Redis is "safe to lose", so on a
+    cold Redis this returns True again — which is exactly why it could never protect the
+    fan-in counter. Kept as an optional building block; never let it gate the counter.
     """
     won = await client.set(f"{TASK_DONE_PREFIX}{task_id}", "1", nx=True, ex=ttl)
     return bool(won)

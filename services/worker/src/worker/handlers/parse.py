@@ -1,4 +1,4 @@
-"""STAGE A — Parse handler (fan-out emitter) (spec §8, §7.1). ⭐
+"""Parse handler (Stage A) — the fan-out emitter.
 
 Consumes ``JobCreated``, loads the manuscript from MinIO, simulates the parse
 vendor call (15% transient failure injection; a poison manuscript fails every

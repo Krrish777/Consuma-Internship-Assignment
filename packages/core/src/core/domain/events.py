@@ -2,8 +2,10 @@
 
 The broker transports **events**, not data. Every field is a string key/identifier; the
 actual bytes live in MinIO and are fetched by key on the consuming side. Each event carries
-a defaulted, unique ``event_id`` — the idempotency key the inbox (``processed_events``) and
-``SETNX`` guards dedupe on, since at-least-once delivery means any event can arrive twice.
+a defaulted, unique ``event_id``. The live pipeline does NOT dedupe on it — at-least-once
+delivery is absorbed by the atomic state-CAS in ``core.infra.queries`` (the handlers are
+re-runnable). ``event_id`` is kept as a stable correlation key for logging and for the
+optional ``processed_events`` inbox helper.
 
 Pure domain: no I/O imports (enforced by tests/unit/test_architecture.py).
 

@@ -98,7 +98,12 @@ class Task(Base):
 
 
 class ProcessedEvent(Base):
-    """Idempotency inbox — INSERT ON CONFLICT DO NOTHING dedupes at-least-once delivery."""
+    """Optional event-level idempotency inbox (event_id PK). NOT on the hot path.
+
+    The live pipeline absorbs at-least-once delivery with the atomic state-CAS in
+    ``queries.py`` — see :func:`mark_event` for why an inbox skip-gate is the wrong
+    fit here. Retained as a tested building block, not a wired guard.
+    """
 
     __tablename__ = "processed_events"
 
@@ -127,15 +132,18 @@ async def create_tables(conn: AsyncConnection) -> None:
 
 
 async def mark_event(session: AsyncSession, event_id: str) -> bool:
-    """Durable idempotency inbox — THE authority for exactly-once effect (SPEC §4).
+    """``INSERT event_id ON CONFLICT DO NOTHING`` — event-level idempotency helper.
 
-    ``INSERT ... ON CONFLICT DO NOTHING`` (the postgresql dialect insert, which has
-    ``.on_conflict_do_nothing``). Returns True if this event_id was newly recorded
-    (first delivery → process it), False if it was already present (a duplicate
-    delivery → skip). The caller commits in the SAME transaction as the side effect
-    this guards (e.g. the fan-in decrement), so guard and effect are atomic. The
-    Redis ``seen_once`` fast-path sits in front of this but never replaces it — never
-    let ephemeral Redis be the thing protecting the counter (H3).
+    NOT the pipeline's idempotency authority. The live guard is the atomic
+    state-CAS in ``queries.py`` (``complete_task_and_decrement`` and friends): the
+    handlers are deliberately re-runnable and re-publish on every redelivery, so a
+    committed-but-unpublished event is recovered on the next delivery. An inbox
+    *skip-gate* ("seen this event_id → do nothing") would defeat that recovery and
+    strand lost publishes, so this is intentionally kept off the hot path.
+
+    Returns True if the event_id was newly recorded, False if already present. Kept
+    as a tested building block for any future effect that genuinely needs once-only
+    (non-republishable) semantics.
     """
     stmt = pg_insert(ProcessedEvent).values(event_id=event_id).on_conflict_do_nothing()
     result = cast("CursorResult[Any]", await session.execute(stmt))
@@ -143,10 +151,11 @@ async def mark_event(session: AsyncSession, event_id: str) -> bool:
 
 
 async def purge_processed_events(session: AsyncSession, older_than_seconds: int) -> int:
-    """H10 retention — delete inbox rows older than the window; return rows deleted.
+    """Retention — delete inbox rows older than the window; return rows deleted.
 
-    The processed_events inbox grows unbounded otherwise. Uses DB-side ``now()`` so
-    the cutoff is immune to app/DB clock skew. Wire into the sweeper or a small reaper.
+    Bounds the processed_events table should it ever be written to. Uses DB-side
+    ``now()`` so the cutoff is immune to app/DB clock skew. Wired into the gateway
+    sweeper (``run_sweeper`` → ``purge_once``).
     """
     cutoff = func.now() - timedelta(seconds=older_than_seconds)
     stmt = delete(ProcessedEvent).where(ProcessedEvent.consumed_at < cutoff)

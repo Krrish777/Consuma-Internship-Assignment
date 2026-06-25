@@ -1,4 +1,4 @@
-"""W2 — ack-last handler skeleton (spec §4; CLAUDE.md MUST #1). ⭐
+"""Ack-last handler skeleton — the core delivery-ordering rule.
 
 The single most important ordering in the system:
 
