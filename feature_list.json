@@ -410,8 +410,8 @@
       "rung": 3,
       "behavior": "Crash recovery: manual ack LAST (after Postgres commit), prefetch set, NACK->retry path. docker kill mid-job loses no message.",
       "verification": ["make e2e -k crash_recovery (docker kill worker mid-job -> redelivered, job converges)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest -m e2e -k crash_recovery -> 1 passed in 42.78s (test_job_survives_worker_crash_and_completes_on_recovery) against the LIVE compose stack. DETERMINISTIC design: the sim's only vendor latency is asyncio.sleep(0) so a job processes in ms — a mid-handler kill cannot be timed without racing. Instead: docker kill WORKER first, POST a 5-block job, assert it stays PENDING across a 5s outage (JobCreated sits durably in q.parse, no consumer, no loss), docker start WORKER, then assert COMPLETED + final_key set + pending_count==0 within 300s (worker re-runs its uv-sync entrypoint ~30s, reconnects, runs full parse->tts->stitch). A lost message would strand the job in PENDING forever, so reaching COMPLETED IS the no-loss proof. The complementary in-flight unacked-redelivery path (ack-last) is L3-proven by the idempotency handlers (B4 conditional claim, W4 H-EMIT, W5 stitch H5); split documented in DECISIONS Phase-6 R3.1. commit 700e587 base (uncommitted; user handles git)."
     },
     {
       "id": "R3.2",

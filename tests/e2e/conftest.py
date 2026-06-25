@@ -22,8 +22,13 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 GATEWAY_URL = "http://localhost:8000"
+# Host-mapped ports from docker-compose.yml (probes run on the host, not in-network).
+BROKER_URL = "amqp://guest:guest@localhost:5672/"
+DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/consuma"
 TERMINAL_STATES = {"COMPLETED", "FAILED"}
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -84,3 +89,44 @@ def wait_for_status(
         return status
 
     return _wait
+
+
+@pytest.fixture
+async def publish_raw(
+    stack: str,
+) -> AsyncIterator[Callable[..., Awaitable[None]]]:
+    """Inject a raw event onto a live queue — the duplicate-delivery injector (R3.2).
+
+    Opens its own connection to the host-mapped RabbitMQ and declares the same
+    topology the worker uses (idempotent), so a probe can re-publish a second copy
+    of an event the pipeline already produced and assert exactly-once *effect*.
+    """
+    from core.infra import broker
+
+    conn = await broker.connect(BROKER_URL)
+    try:
+        channel = await conn.channel()
+        exchange = await broker.declare_full(channel)
+
+        async def _publish(event: BaseModel, *, routing_key: str) -> None:
+            await broker.publish(exchange, event, routing_key=routing_key)
+
+        yield _publish
+    finally:
+        await conn.close()
+
+
+@pytest.fixture
+async def db_engine(stack: str) -> AsyncIterator[AsyncEngine]:
+    """An async engine to the compose Postgres for asserting durable DB state.
+
+    Probes that need to prove exactly-once effect (no extra task rows, no negative
+    counter) read the durable truth directly rather than inferring it from /status.
+    """
+    from core.infra.db import get_engine
+
+    engine = get_engine(DATABASE_URL)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()

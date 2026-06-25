@@ -36,9 +36,7 @@ async def test_job_survives_worker_crash_and_completes_on_recovery(
     # Crash the worker BEFORE the job arrives (deterministic — see module docstring).
     kill_container(WORKER)
     try:
-        manuscript = "\n\n".join(
-            f"Block {i} of the resilient broadcast." for i in range(5)
-        )
+        manuscript = "\n\n".join(f"Block {i} of the resilient broadcast." for i in range(5))
         resp = await client.post("/jobs", json={"manuscript": manuscript})
         assert resp.status_code == 202, resp.text
         job_id = resp.json()["job_id"]
