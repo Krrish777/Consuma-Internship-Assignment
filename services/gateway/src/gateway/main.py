@@ -38,9 +38,10 @@ from core.domain.state import JobStatus
 from core.infra import broker
 from core.infra.db import Job, get_engine, get_session
 from core.infra.logging import bind_job_id, configure_logging, get_logger
+from core.infra.queries import job_counts_by_status
 from core.infra.storage import ensure_bucket, put_text
 
-from gateway.schemas import CreateJobRequest, JobAccepted, JobStatusResponse
+from gateway.schemas import CreateJobRequest, JobAccepted, JobStatusResponse, StatsResponse
 
 configure_logging()
 log = get_logger("gateway")
@@ -137,6 +138,24 @@ async def create_job(body: CreateJobRequest, request: Request) -> JobAccepted:
 
     log.info("job created", extra={"job_id": job_id})
     return JobAccepted(job_id=job_id)
+
+
+@app.get("/stats", response_model=StatsResponse)
+async def stats(request: Request) -> StatsResponse:
+    """R5.1 — runtime job counts by status. Read-only; no locks, no writes.
+
+    Counts are computed by B6's SQL ``GROUP BY`` aggregate (never by scanning
+    rows in Python), then zero-filled across every FSM state so the response
+    shape is stable even when a status has no rows.
+    """
+    engine = request.app.state.engine
+
+    async with get_session(engine) as session:
+        counts = await job_counts_by_status(session)
+
+    jobs = {status.value: counts.get(status.value, 0) for status in JobStatus}
+    log.info("stats served", extra={"jobs": jobs})
+    return StatsResponse(jobs=jobs)
 
 
 @app.get("/status/{job_id}", response_model=JobStatusResponse)

@@ -29,3 +29,13 @@ class JobStatusResponse(BaseModel):
     pending_count: int | None = None
     manuscript_key: str | None = None
     final_key: str | None = None
+
+
+class StatsResponse(BaseModel):
+    """Runtime aggregate (G7 / R5.1).
+
+    ``jobs`` is zero-filled across every FSM state so the JSON shape is stable
+    for dashboards regardless of which statuses currently have rows.
+    """
+
+    jobs: dict[str, int]
