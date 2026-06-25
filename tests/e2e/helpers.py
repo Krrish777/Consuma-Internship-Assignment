@@ -9,8 +9,11 @@ whole point of L4, and it can't be simulated against a testcontainer.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 from core.domain.vendor import POISON_MARKER
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Compose container names (project "consuma" from docker-compose.yml `name:`).
 WORKER = "consuma-worker-1"
@@ -49,6 +52,24 @@ def start_container(name: str) -> None:
 def restart_container(name: str) -> None:
     """Bounce a dependency mid-job (E-EDGE dependency-down scenario)."""
     _docker("restart", name)
+
+
+def scale_workers(n: int) -> None:
+    """Scale the worker service to N replicas (the deployment shape for R4.1/I4).
+
+    ``--scale`` only adds/removes replicas; it doesn't recreate the running ones,
+    so it avoids the recreate race. All replicas share the ONE global Redis
+    semaphore — that is exactly what the R4.1 probe asserts (Constraint A is global,
+    not per-process).
+    """
+    subprocess.run(
+        ["docker", "compose", "up", "-d", "--scale", f"worker={n}", "--no-build"],
+        cwd=_REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
 
 
 def poison_manuscript() -> str:

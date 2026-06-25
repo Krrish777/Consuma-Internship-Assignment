@@ -23,12 +23,14 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import BaseModel
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 GATEWAY_URL = "http://localhost:8000"
 # Host-mapped ports from docker-compose.yml (probes run on the host, not in-network).
 BROKER_URL = "amqp://guest:guest@localhost:5672/"
 DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/consuma"
+REDIS_URL = "redis://localhost:6379/0"
 TERMINAL_STATES = {"COMPLETED", "FAILED"}
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -130,3 +132,19 @@ async def db_engine(stack: str) -> AsyncIterator[AsyncEngine]:
         yield engine
     finally:
         await engine.dispose()
+
+
+@pytest.fixture
+async def redis_client(stack: str) -> AsyncIterator[Redis]:
+    """A Redis client to the compose Redis for inspecting coordination state.
+
+    R4.1 reads the global TTS slot pool (``tts:slots``) to prove the semaphore is
+    shared across scaled workers (exactly ``TTS_CONCURRENCY`` tokens, not N×).
+    """
+    from core.infra.redis import get_redis
+
+    client = get_redis(REDIS_URL)
+    try:
+        yield client
+    finally:
+        await client.aclose()

@@ -426,8 +426,8 @@
       "rung": 3,
       "behavior": "DLQ: poison pill dead-letters after 3 retries with exponential backoff, off the hot queue (no head-of-line blocking of healthy traffic). Job -> FAILED.",
       "verification": ["make e2e -k poison_pill (-> DLQ after 3 attempts; concurrent healthy jobs still complete)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest -m e2e -k poison -> 1 passed in 38s against the LIVE stack (test_poison_dlqs_after_retries_without_head_of_line_block). Submitted 3 healthy jobs + 1 poison_manuscript() (POISON_MARKER -> simulate_parse raises VendorError every attempt) concurrently. Healthy jobs all reach COMPLETED within 60s while the poison is still in its 1/4/16s backoff -> proves NO head-of-line block (the retry ladder rides dedicated TTL'd delay queues with DLX, off the hot q.parse). Poison exhausts 3 retries (~21s) -> q.dlq -> W7 resolver CAS the parse-poison job to FAILED (converges, never hangs, never COMPLETED). Flake-safe: a healthy job DLQs only on 4 consecutive 15% parse losses (~0.05%/job). make check green (106 unit). commit 700e587 base (uncommitted; user handles git)."
     },
     {
       "id": "R3.4",
