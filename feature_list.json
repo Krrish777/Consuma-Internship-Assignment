@@ -170,6 +170,26 @@
       "evidence": "DECISIONS.md H-XDEATH entry written; grep broker.py for x-death.count -> 0 code usages (comments only); mypy 39 files 0 errors; topology last green at 61d73fe (no broker.py changes); commit ed6693e HEAD"
     },
     {
+      "id": "D3",
+      "rung": 2,
+      "behavior": "Pure domain splitter (BOM 02-D3, feeds R2.3): split_blocks(manuscript) in core/domain/text.py splits a manuscript on blank-line boundaries (paragraph = block), strips whitespace, drops empties. Empty/whitespace-only -> [] (0-block path). One paragraph -> [that]. Deterministic; the fan-out width comes from here. MUST NOT raise on empty/huge input (bounding is W3/H14's job); MUST stay I/O-free (architecture test).",
+      "verification": [
+        "uv run pytest tests/unit -k text (empty->[], whitespace->[], 1 para->1, 3 paras->3, leading/trailing blanks ignored)"
+      ],
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k text -> 16 passed (0/1/3-block, strip, blank-line collapse, whitespace-only separator, soft-newline kept, deterministic, parametrized fan-out width); full gate: ruff+fmt clean, mypy 41 files 0 errors, pytest tests/unit 68 passed; commit 0aff00f HEAD anchor (user handles git)"
+    },
+    {
+      "id": "D4",
+      "rung": 4,
+      "behavior": "Pure canonical content hasher (BOM 02-D4, feeds R4.2 cache + R2.3 Task.block_hash): content_hash(text) in core/domain/hash.py returns sha256(text.encode('utf-8')).hexdigest() — a 64-char hex digest, stable across processes/runs (no salt). MUST hash the block TEXT, never the task_id (conflating the vendor-call cache key with the fan-in counter key is the named junior trap). Single canonical hasher reused by W3 (Task.block_hash) and W4 (cache + tts/<hash>.wav key). MUST stay I/O-free (architecture test).",
+      "verification": [
+        "uv run pytest tests/unit -k hash (same text->same hash; different text->different; 64-char lowercase hex; known vectors for fixed strings)"
+      ],
+      "status": "in_progress",
+      "evidence": ""
+    },
+    {
       "id": "R2.3",
       "rung": 2,
       "behavior": "Parse handler: split blocks, write N Task rows + pending_count=N in ONE transaction, fan-out TtsRequested xN, advance GENERATING. 0-block manuscript -> STITCHING directly (no hang).",
