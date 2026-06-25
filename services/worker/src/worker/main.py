@@ -31,7 +31,7 @@ from core.infra.logging import get_logger
 from worker.bootstrap import WorkerContext, build_context, close_context
 from worker.dispatch import build_handlers
 from worker.handlers.dlq import make_dlq_handler
-from worker.maintenance import run_reseeder
+from worker.maintenance import run_reaper, run_reseeder
 
 log = get_logger("worker")
 
@@ -100,20 +100,29 @@ async def run() -> None:
     handlers[Q_DLQ] = make_dlq_handler(ctx)
     await register_consumers(ctx, handlers)
 
-    # H1: re-seed the TTS semaphore pool if Redis is ever wiped (no-op on a healthy
-    # pool). Without it, a `docker restart redis` would strand acquire() on an empty
-    # BLPOP forever. Cancelled cleanly on shutdown, below.
-    reseeder_task = asyncio.create_task(
-        run_reseeder(semaphore=ctx.semaphore, interval_s=ctx.settings.RESEED_INTERVAL_S)
-    )
+    # Background semaphore maintenance (cancelled cleanly on shutdown, below):
+    #   H1 run_reseeder — re-seed tts:slots if Redis is ever wiped (else acquire()
+    #     BLPOPs an empty pool forever); no-op on a healthy pool (marker-guarded).
+    #   H2 run_reaper — return a crashed holder's orphaned token to the pool (else
+    #     a worker crash mid-TTS shrinks the effective pool until the next reboot).
+    maintenance_tasks = [
+        asyncio.create_task(
+            run_reseeder(semaphore=ctx.semaphore, interval_s=ctx.settings.RESEED_INTERVAL_S)
+        ),
+        asyncio.create_task(
+            run_reaper(semaphore=ctx.semaphore, interval_s=ctx.settings.REAP_INTERVAL_S)
+        ),
+    ]
     log.info("worker running; consuming q.parse / q.tts / q.stitch / q.dlq")
 
     try:
         await shutdown.wait()
     finally:
-        reseeder_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await reseeder_task
+        for task in maintenance_tasks:
+            task.cancel()
+        for task in maintenance_tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         await close_context(ctx)
         log.info("worker stopped cleanly")
 

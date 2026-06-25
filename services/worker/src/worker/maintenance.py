@@ -15,7 +15,14 @@ marker-guarded (atomic Lua, init-once not top-up): on a healthy or merely conten
 pool the marker is present and the call is a no-op, so only a genuinely wiped pool
 (marker gone with the data) is ever re-seeded.
 
-The loop mirrors the gateway ``run_sweeper`` shape: sleep-first (a freshly-booted
+``run_reaper`` schedules ``Semaphore.reap()`` — the owner-checked atomic Lua step
+that returns a crashed holder's orphaned token to the pool exactly once. Its
+reclaim logic is already L3-proven (X5); without a periodic caller, though, a dead
+holder's slot only comes back if someone happens to reap, so a crash would shrink
+the effective pool until the next reboot. The ⅓-TTL heartbeat keeps a live-but-slow
+holder's lease fresh, so a periodic reaper only ever reclaims genuinely-dead ones.
+
+Both loops mirror the gateway ``run_sweeper`` shape: sleep-first (a freshly-booted
 worker already seeded, so don't fire a redundant re-seed on boot), swallow-and-
 continue (one failing pass — e.g. Redis mid-bounce — must never kill the loop),
 and cancel cleanly when the worker's shutdown event cancels the task.
@@ -43,3 +50,18 @@ async def run_reseeder(*, semaphore: Semaphore, interval_s: int) -> None:
             await semaphore.ensure_slots()
         except Exception:  # noqa: BLE001 — the loop must outlive any single pass
             log.exception("semaphore re-seed pass failed")
+
+
+async def run_reaper(*, semaphore: Semaphore, interval_s: int) -> None:
+    """Reclaim orphaned TTS tokens every ``interval_s`` until cancelled.
+
+    Sleeps before the first pass (no orphans exist on a fresh boot). A failing pass
+    is logged and swallowed so the reaper outlives any single Redis hiccup. ``reap``
+    is owner-checked, so it never disturbs a live holder.
+    """
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            await semaphore.reap()
+        except Exception:  # noqa: BLE001 — the loop must outlive any single pass
+            log.exception("semaphore reap pass failed")

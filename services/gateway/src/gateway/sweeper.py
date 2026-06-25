@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from core.domain.events import JobCreated
 from core.domain.state import JobStatus
 from core.infra import broker
-from core.infra.db import Job, get_session
+from core.infra.db import Job, get_session, purge_processed_events
 from core.infra.logging import get_logger
 
 log = get_logger("gateway.sweeper")
@@ -58,15 +58,41 @@ async def sweep_once(
     return len(stale_ids)
 
 
-async def run_sweeper(
-    *, engine: AsyncEngine, exchange: AbstractExchange, interval_s: int, pending_timeout_s: int
-) -> None:
-    """Loop ``sweep_once`` every ``interval_s`` until cancelled (lifespan-managed).
+async def purge_once(*, engine: AsyncEngine, retention_s: int) -> int:
+    """Delete processed_events inbox rows older than ``retention_s`` (H10/H3).
 
-    Sleeps *before* the first pass so a freshly-started gateway doesn't fire a
-    redundant sweep on boot, and so tests with a long interval never trigger it.
-    A failing pass is logged and swallowed — one bad sweep must never kill the
-    reconciler loop.
+    Returns the number of rows deleted. The inbox is the durable exactly-once
+    authority (``mark_event``); without retention it grows unbounded. Kept separate
+    from ``sweep_once`` (which stays re-publish-only by the G8 decision) so each
+    concern is independently tested. ``get_session`` does not auto-commit, so the
+    DELETE is committed explicitly. The cutoff uses DB-side ``now()`` inside
+    ``purge_processed_events`` (clock-skew-immune).
+    """
+    async with get_session(engine) as session:
+        deleted = await purge_processed_events(session, retention_s)
+        await session.commit()
+    if deleted:
+        log.info("sweeper purged expired processed_events", extra={"count": deleted})
+    return deleted
+
+
+async def run_sweeper(
+    *,
+    engine: AsyncEngine,
+    exchange: AbstractExchange,
+    interval_s: int,
+    pending_timeout_s: int,
+    retention_s: int,
+) -> None:
+    """Loop the reconciler every ``interval_s`` until cancelled (lifespan-managed).
+
+    Each pass does two independent jobs: ``sweep_once`` re-drives orphaned PENDING
+    jobs (G8), and ``purge_once`` trims the processed_events inbox past its retention
+    window (H10/H3). Sleeps *before* the first pass so a freshly-started gateway
+    doesn't fire a redundant pass on boot, and so tests with a long interval never
+    trigger it. Each job is wrapped separately so a failure in one never skips the
+    other, and a failing pass is logged and swallowed — one bad pass must never kill
+    the reconciler loop.
     """
     while True:
         await asyncio.sleep(interval_s)
@@ -74,3 +100,7 @@ async def run_sweeper(
             await sweep_once(engine=engine, exchange=exchange, pending_timeout_s=pending_timeout_s)
         except Exception:  # noqa: BLE001 — the loop must outlive any single pass
             log.exception("sweeper pass failed")
+        try:
+            await purge_once(engine=engine, retention_s=retention_s)
+        except Exception:  # noqa: BLE001 — the loop must outlive any single pass
+            log.exception("purge pass failed")

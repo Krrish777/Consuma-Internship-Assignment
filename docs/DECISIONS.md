@@ -497,3 +497,38 @@ idempotent processing; (5) honest limits.
   *delivery* disclaimed + no affirmative claim; seams cite real probes). `make check` green: ruff+fmt clean,
   mypy --strict, 113 unit passed (109 + 4 new). Changed files: ARCHITECTURE.md (new),
   tests/unit/test_architecture_doc.py (new), this entry. commit 700e587 base; uncommitted (user handles git).
+
+## 2026-06-25 · Optional hardening / H1 — Redis-bounce semaphore re-seed (supersedes the Phase-6 gap note)
+This **closes** the "⚠ Real resilience gap (Redis bounce)" documented in the Phase-6 E-EDGE entry above and
+stated as a known limit in ARCHITECTURE.md §5. It was the one real correctness/resilience gap left after
+FEATURES.md was exhausted; the user directed the optional-hardening backlog and confirmed the approach.
+- **Gap:** `Semaphore.ensure_slots()` seeded the TTS pool only on worker boot (`bootstrap.py`) and compose Redis
+  has no volume, so a `FLUSHALL` / eviction / restart-without-persistence wiped `tts:slots` + its `tts:slots:init`
+  marker and a *running* worker's next `acquire()` BLPOPped an empty list forever → the job never reached
+  COMPLETED. The Phase-6 entry deliberately left this unprobed (a probe would hang, not fail cleanly).
+- **Approach — chosen WITH the user, not guessed (the open design decision the handoff flagged):** a worker-side
+  **periodic re-seed loop**, `run_reseeder` in `services/worker/src/worker/maintenance.py`, calling `ensure_slots`
+  every `RESEED_INTERVAL_S` (default 30s), mirroring the gateway `run_sweeper` (sleep-first, swallow-and-continue,
+  cancelled cleanly on the shutdown event). Launched as an `asyncio.Task` in `worker.main run()`.
+  - *Rejected (a) reconnect-hook re-seed:* redis-py 8's async pool reconnects lazily with no public callback — no
+    clean attachment point without monkeypatching internals.
+  - *Rejected (c) bounded-BLPOP + re-seed-on-empty:* invasive (changes `acquire` semantics) and can't tell "wiped"
+    from "all 3 legitimately held" without the marker check — collapses into (b) plus extra complexity on the hot path.
+  - *Rejected (d) Redis AOF/volume:* infra-only; survives a restart but not a true flush/eviction, and contradicts
+    the golden rule that Redis is *ephemeral, safe to lose* (the system must self-heal, not lean on persistence).
+- **Why it's safe (no Constraint-A breach):** `ensure_slots` is marker-guarded (atomic Lua, **init-once not
+  top-up**), so on a healthy/contended pool the marker is present and the call is a no-op — only a genuinely wiped
+  pool (marker gone with the data) is re-seeded. Proven: the e2e semaphore concurrency probe still holds the
+  3-slot limit with the reseeder live. The brief slots+k over-provisioning possible right after a wipe (held tokens
+  released back atop a fresh pool) is the documented soft-limit window — liveness (job completes) over a hard cap.
+- **Verified:** TDD — `tests/unit/test_reseeder.py` first (RED: no `worker.maintenance`), then `run_reseeder`
+  (GREEN, 4 tests: sleep-first w/ configured interval, re-seed each pass, swallow a failing pass, cancellable).
+  `make check` green: ruff+fmt, mypy --strict, **117 unit**. L4 attribution proof (cheap, replaces a 150s hang):
+  `FLUSHALL` → `LLEN tts:slots`=0 immediately, then with **no job running** the pool refilled to 3 in 27s + marker
+  restored — and `run_reseeder` is the only caller of `ensure_slots` after boot (the pre-H1 worker, verified to
+  lack `maintenance.py`, could never heal), so the heal is attributable solely to the reseeder. User-facing L4
+  GREEN: `tests/e2e/test_edge_cases.py -k redis_wipe` → 1 passed (post-wipe 4-block job reaches COMPLETED;
+  asserts `LLEN==0` after flush to guard against a vacuous probe — the DOC1 lesson). Regression: edge_cases +
+  semaphore e2e → 6 passed. Changed files: `worker/maintenance.py` (new), `worker/main.py` (wire + cancel),
+  `core/config.py` (RESEED_INTERVAL_S), `tests/unit/test_reseeder.py` (new), `tests/e2e/helpers.py`
+  (flush_redis/redis_llen), `tests/e2e/test_edge_cases.py` (probe #5 + docstring). commit e4a464c (user handles git).

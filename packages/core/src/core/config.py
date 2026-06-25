@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     # --- Redis TTLs ---
     LEASE_TTL_S: int = 30  # H6 semaphore lease
     RESEED_INTERVAL_S: int = 30  # H1 worker re-seeds tts:slots if Redis is wiped
+    REAP_INTERVAL_S: int = 30  # H2 worker reclaims crashed holders' orphaned slots
     CACHE_TTL_S: int = 86_400  # R3 / H-DANGLE content cache
     PROCESSED_EVENTS_RETENTION_S: int = 604_800  # H10 inbox retention (7 days)
 

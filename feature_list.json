@@ -564,6 +564,19 @@
         "[L4] uv run pytest -m e2e tests/e2e/test_edge_cases.py -k redis_bounce (restart Redis mid-stack, then a NEW job still reaches COMPLETED within a bounded timeout — previously impossible: would hang)",
         "make check (ruff+fmt+mypy+unit green)"
       ],
+      "status": "passing",
+      "evidence": "TDD: tests/unit/test_reseeder.py written first (RED — ModuleNotFoundError: no worker.maintenance), then run_reseeder implemented (GREEN -> 4 passed: sleeps before first pass with the configured interval, re-seeds each pass, swallows a failing pass without dying, cancellable). Created services/worker/src/worker/maintenance.py (run_reseeder: sleep-first loop calling semaphore.ensure_slots, swallow-and-continue, mirrors gateway run_sweeper); wired into worker.main run() as an asyncio.Task cancelled on the shutdown event; added Settings.RESEED_INTERVAL_S=30. make check green: ruff+fmt clean, mypy --strict, 117 unit passed (113 + 4). L4: rebuilt the worker image, then proved BOTH non-vacuousness and attribution cheaply — FLUSHALL emptied tts:slots (LLEN 0 immediately), and with NO job running the pool climbed back to 3 in 27s with the init marker restored; run_reseeder is the only caller of ensure_slots after boot (the pre-H1 worker, verified to lack maintenance.py, could never refill), so the heal is attributable solely to the reseeder. User-facing L4 GREEN: uv run pytest -m e2e tests/e2e/test_edge_cases.py -k redis_wipe -> 1 passed (100s): warm job COMPLETED, FLUSHALL + assert LLEN==0 (guards a vacuous probe), new 4-block job submitted post-wipe reaches COMPLETED within the bounded timeout. Cross-component regression check: tests/e2e/test_edge_cases.py + tests/e2e/test_semaphore.py -> 6 passed (the 3-slot concurrency limit still holds with the reseeder live — the init-once marker guard makes ensure_slots a no-op on a healthy/contended pool, so it never breaches Constraint A). Approach chosen with the user (2026-06-25): periodic re-seed over reconnect-hook (redis-py 8 has no clean async reconnect callback), bounded-BLPOP (invasive/ambiguous), or AOF/volume (contradicts 'Redis is safe to lose' and won't survive a flush). Docstring of test_edge_cases.py updated: the Redis-wipe case is no longer 'deliberately not exercised' — it's case 5. commit e4a464c (user handles git)."
+    },
+    {
+      "id": "H-REAP",
+      "rung": 5,
+      "behavior": "H2 — schedule Semaphore.reap() periodically in the worker. reap() (core/infra/redis.py, owner-checked atomic Lua) RPUSHes back exactly once any token whose lease expired (holder crashed) but was never returned; it is L3-proven (X5, tests/integration/test_redis.py) but NOTHING calls it periodically, so a crashed holder's slot only returns when someone reaps. Fix: add run_reaper to worker/maintenance.py (sleep-first loop calling semaphore.reap() every REAP_INTERVAL_S, swallow-and-continue, mirrors run_reseeder/run_sweeper), launched as a second asyncio.Task in worker.main run() and cancelled on shutdown. The ⅓-TTL heartbeat protects live-but-slow holders, so a periodic reaper only reclaims genuinely-dead ones. MUST: a crashed mid-TTS holder's slot returns to the pool without a manual reap. MUST NOT: reclaim a live holder's token (heartbeat + owner-checked Lua guard this) or change reap()'s semantics.",
+      "verification": [
+        "[L2] uv run pytest tests/unit/test_reaper.py (run_reaper sleeps before first pass, calls reap() each pass, swallows a failing pass, is cancellable)",
+        "[L3] uv run pytest tests/integration/test_redis.py -k reap (the existing X5 reap() reclaim tests still green — reap() semantics unchanged)",
+        "[L4] uv run pytest -m e2e tests/e2e/test_semaphore.py (3-slot global limit still holds with the reaper loop live)",
+        "make check (ruff+fmt+mypy+unit green)"
+      ],
       "status": "in_progress",
       "evidence": ""
     }

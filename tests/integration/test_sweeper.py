@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Generator
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -22,10 +23,12 @@ from sqlalchemy import select
 from testcontainers.postgres import PostgresContainer
 from testcontainers.rabbitmq import RabbitMqContainer
 
+from sqlalchemy import func, update
+
 from core.infra import broker
-from core.infra.db import Job, create_tables, get_engine, get_session
+from core.infra.db import Job, ProcessedEvent, create_tables, get_engine, get_session, mark_event
 from core.domain.state import JobStatus
-from gateway.sweeper import sweep_once
+from gateway.sweeper import purge_once, sweep_once
 
 pytestmark = pytest.mark.integration
 
@@ -147,3 +150,64 @@ def test_sweep_once_ignores_non_pending(sweeper_ctx: dict[str, str]) -> None:
     assert found is None
     # other stale PENDING jobs from earlier tests may exist; this job must not appear
     assert count >= 0
+
+
+# --- H3 / H-PURGE: processed_events retention folded into the sweep loop -------
+
+
+async def _seed_event(pg_url: str, event_id: str, *, age_seconds: int) -> None:
+    """Record an inbox row, then age its consumed_at by ``age_seconds`` (DB-side now)."""
+    engine = get_engine(pg_url)
+    try:
+        async with get_session(engine) as session:
+            await mark_event(session, event_id)
+            if age_seconds:
+                await session.execute(
+                    update(ProcessedEvent)
+                    .where(ProcessedEvent.event_id == event_id)
+                    .values(consumed_at=func.now() - timedelta(seconds=age_seconds))
+                )
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+
+async def _event_exists(pg_url: str, event_id: str) -> bool:
+    engine = get_engine(pg_url)
+    try:
+        async with get_session(engine) as session:
+            row = await session.get(ProcessedEvent, event_id)
+            return row is not None
+    finally:
+        await engine.dispose()
+
+
+def test_purge_once_deletes_expired_inbox_rows_keeps_fresh(sweeper_ctx: dict[str, str]) -> None:
+    """purge_once deletes rows older than the retention window, keeps fresh ones."""
+    pg = sweeper_ctx["pg_url"]
+    asyncio.run(_seed_event(pg, "purge-old-1", age_seconds=1000))
+    asyncio.run(_seed_event(pg, "purge-fresh-1", age_seconds=0))
+
+    # retention 100s: the 1000s-old row is expired, the just-recorded row is not.
+    deleted = asyncio.run(purge_once_via(pg, retention_s=100))
+
+    assert deleted >= 1, "purge_once reported nothing deleted despite an expired row"
+    assert asyncio.run(_event_exists(pg, "purge-old-1")) is False, "expired row not purged"
+    assert asyncio.run(_event_exists(pg, "purge-fresh-1")) is True, "fresh row wrongly purged"
+
+
+def test_purge_once_keeps_everything_within_retention(sweeper_ctx: dict[str, str]) -> None:
+    """A generous retention window leaves a moderately-aged row in place."""
+    pg = sweeper_ctx["pg_url"]
+    asyncio.run(_seed_event(pg, "purge-keep-1", age_seconds=100))
+    asyncio.run(purge_once_via(pg, retention_s=3600))
+    assert asyncio.run(_event_exists(pg, "purge-keep-1")) is True, "row purged within retention"
+
+
+async def purge_once_via(pg_url: str, *, retention_s: int) -> int:
+    """Open a fresh engine on this loop and run purge_once (mirrors _run_sweep)."""
+    engine = get_engine(pg_url)
+    try:
+        return await purge_once(engine=engine, retention_s=retention_s)
+    finally:
+        await engine.dispose()

@@ -90,6 +90,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             exchange=exchange,
             interval_s=settings.SWEEP_INTERVAL_S,
             pending_timeout_s=settings.PENDING_TIMEOUT_S,
+            retention_s=settings.PROCESSED_EVENTS_RETENTION_S,
         )
     )
 
