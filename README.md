@@ -93,5 +93,3 @@ make demo            # all three, narrated, for a recording
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) covers the design: where data lives, the atomic fan-in,
   the four crash points, and why this is exactly-once in effect rather than in delivery.
-- [docs/SPEC.md](docs/SPEC.md) is the requirements, and the source of truth.
-- [docs/DECISIONS.md](docs/DECISIONS.md) is the decision log and the known limits.
