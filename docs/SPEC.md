@@ -91,21 +91,64 @@ depends on `core`, **never** on `worker` · `worker` depends on `core`, **never*
   Publish-then-crash = duplicate, absorbed by idempotency.
 - **Exactly-once effect** = at-least-once delivery + idempotent processing. Crash recovery
   *creates* the duplicate problem idempotency *absorbs* — same coin.
-- **Idempotency layers:** event-id inbox (`INSERT ... ON CONFLICT DO NOTHING` in
-  `processed_events`) for parse/ingest; `SETNX task:done:<task_id>` for the fan-in decrement;
-  content cache (`sha256(text)`) for the vendor call; object key = hash for MinIO writes.
-- **Global TTS semaphore:** Redis token list, `BLPOP tts:slots` to acquire (blocks, no
-  busy-poll), `RPUSH` to release. **Cache check happens BEFORE acquiring a slot** (a cache hit
-  must not burn a token). Each slot is a **lease with TTL** so a crashed worker's slot
-  auto-reclaims — otherwise the pool of 3 silently shrinks to 0 → deadlock.
+- **Idempotency layers (where the *authority* lives matters):**
+  - **Fan-in decrement idempotency is a durable, conditional `tasks.status` UPDATE inside the
+    decrement transaction** — `UPDATE tasks SET status='DONE', audio_key=… WHERE task_id=:id AND
+    status<>'DONE'`, and the `pending_count` decrement runs *only* if that claim's rowcount is 1
+    (`core/infra/queries.py::complete_task_and_decrement`, card B4). A Redis `SETNX task:done:<id>`
+    may exist as a non-authoritative fast-path, but it MUST NOT be the guard: Redis is "safe to
+    lose", and an evicted key would let a redelivery double-decrement → an early `StitchReady` →
+    an incomplete drama wrongly marked `COMPLETED` (H3).
+  - **Parse is a *re-publishable emitter*, never inbox-skipped (H2/H15).** A parse redelivery that
+    finds its `Task` rows already inserted (`INSERT … ON CONFLICT DO NOTHING` on `job_id+block_index`)
+    MUST still re-publish all N `TtsRequested` events; skipping them on the strength of an inbox hit
+    would strand the un-emitted children and the job hangs in `GENERATING`. `pending_count` is seeded
+    exactly once, only on the first `PENDING→PARSING` compare-and-set (`begin_parse`, H15) — a re-run
+    must never reset it (that would resurrect already-decremented tasks). The event-id inbox
+    (`processed_events`, `INSERT … ON CONFLICT DO NOTHING`) is the durable dedup *authority* for
+    effect-once consumers; it is not applied to parse's emit step.
+  - Content cache (`sha256(text)`) dedups the vendor call; object key = `tts/<hash>.wav` for MinIO writes.
+- **Global TTS semaphore (soft, best-effort limit):** Redis token list, `BLPOP tts:slots` to acquire
+  (blocks, no busy-poll), `RPUSH` to release. **Cache check happens BEFORE acquiring a slot** (a cache
+  hit must not burn a token). Each slot is a **lease with TTL** so a crashed worker's slot auto-reclaims
+  — otherwise the pool of 3 silently shrinks to 0 → deadlock. A ⅓-TTL heartbeat renews a live holder's
+  lease; an owner-checked reaper RPUSHes expired-but-unreturned tokens back exactly once (X5). This is an
+  honest *soft* limit, not a hard guarantee — breaches are logged, not prevented.
 - **DLQ retry ladder:** RabbitMQ has no native delay → per-queue TTL retry queues that
-  dead-letter back to the main queue: `1s → 4s → 16s`, then to `q.dlq` after 3 attempts. Gate
-  on the `x-death` count *before* re-publishing (infinite-loop trap). Failing message leaves
-  the hot queue → no head-of-line blocking. (Defaults in `core/config.py`: `RETRY_DELAYS=1,4,16`,
-  `MAX_RETRIES=3`.)
+  dead-letter back to the main queue: `1s → 4s → 16s`, then to `q.dlq` after 3 attempts. Gate on the
+  **custom `x-retry-count` header** *before* re-publishing (infinite-loop trap) — **not** `x-death.count`,
+  which is **frozen on RabbitMQ ≥3.13** under persistent delivery (we pin 4.x) and would never advance,
+  looping forever (H-XDEATH; see `docs/DECISIONS.md` F0.4). Failing message leaves the hot queue → no
+  head-of-line blocking. (Defaults in `core/config.py`: `RETRY_DELAYS=1,4,16`, `MAX_RETRIES=3`.)
+- **DLQ ↔ fan-in rule (H4):** a poisoned TTS block that exhausts its retries and lands on `q.dlq` must
+  still **resolve the fan-in barrier** — otherwise the job hangs in `GENERATING` forever. A dedicated
+  resolver consumes `q.dlq` *off the hot queue* (no head-of-line blocking), marks that task `FAILED`,
+  and still decrements `pending_count`; if the decrement reaches 0 it emits `StitchReady` (stitch later
+  skips `FAILED`-block keys). Never drop a DLQ message without touching the barrier
+  (`worker/handlers/dlq.py`, card W7).
+- **PENDING-sweeper — the gateway's outbox-via-state reconciler (H1):** the gateway dual-write
+  (`COMMIT Job(PENDING)` then `publish JobCreated`) is not atomic; a crash between them orphans a
+  `PENDING` job. "Ack last" is a *consumer* rule and cannot cover the gateway *producer*. A periodic
+  sweeper re-publishes `JobCreated` for jobs stuck in `PENDING` past a generous timeout (the `Job` row
+  **is its own outbox**); it selects job-ids only and **never mutates status**, and it is safe precisely
+  because parse is the idempotent re-publishable emitter above (`gateway/sweeper.py`, card G8/R3.4).
+- **Stitch idempotency + FSM compare-and-set (H5/H-FSM):** every job-status write is a **compare-and-set**
+  (`UPDATE jobs SET status=:next WHERE job_id=:id AND status IN (:legal_predecessors)`), never a
+  read-then-write; a rowcount-0 CAS is a *normal* concurrent outcome ("someone else already advanced
+  it"), handled idempotently, not an error. A redelivered `StitchReady` for a job already `COMPLETED`
+  short-circuits (ack and return) — no second asset, no illegal `COMPLETED→COMPLETED`
+  (`core/domain/state.py` + `worker/handlers/stitch.py`, cards W5/H-FSM).
 - **Cache vs counter must not be conflated:** dedup the *vendor call* (key `sha256(text)`),
   never the *counter decrement* (key `task_id`). Two identical blocks in one job share a cache
   entry but remain two task rows that must each decrement.
+- **Security / DoS notes (defends the ingestion and webhook surfaces):**
+  - **SSRF:** the client-supplied `callback_url` is checked before any webhook POST — host allowlist,
+    then resolve *all* A/AAAA records and reject any private/loopback/link-local/reserved/multicast IP
+    (defeats DNS-rebinding), with `follow_redirects=False` + a hard timeout (`worker/ssrf.py`, H-SSRF).
+  - **manuscript-size:** an oversized body is rejected with a machine-readable 413 by a `Content-Length`
+    pre-check in middleware, *before* it is buffered into memory (`MAX_MANUSCRIPT_BYTES`, H13).
+  - **block-count:** the parse fan-out width is capped at `MAX_BLOCKS` so one manuscript can't spawn an
+    unbounded task storm (H14). A webhook/notification failure MUST NOT fail the job — it stays `COMPLETED`.
 
 ---
 

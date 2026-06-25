@@ -428,3 +428,47 @@ surfaced. WIP=1 throughout; check-wip.py + check-evidence.py exit 0.
   Changed files: docker-compose.yml (minio+gateway healthchecks), init.sh (smoke), storage.py (H-DANGLE doc),
   worker/main.py (prefetch doc), tests/integration/test_storage.py (+1). commit 700e587 base; uncommitted
   (user handles git).
+
+## 2026-06-25 · Phase 8 / DOC1 — correct SPEC §4 to match the built code (7 arch-review corrections)
+`docs/SPEC.md §4` predated the 2026-06-24 arch review and literally *taught* several of the S0/S1 bugs. Now
+that the corrected mechanisms are built and green, §4 is rewritten so the source of truth agrees with the code
+and the decision log. Append-only: these are new entries; no prior decision was edited. Each correction below
+maps to its owning card (all `passing`) and is pinned by an L1 guard test (`tests/unit/test_spec_consistency.py`,
+3 tests) so a future edit can't silently regress §4 back into teaching a fixed bug. WIP=1; check hooks exit 0.
+- **(1) Drop `x-death.count` gating → custom `x-retry-count` header (H-XDEATH).** `x-death.count` is frozen on
+  RabbitMQ ≥3.13 under persistent delivery (we pin 4.x), so gating re-publishes on it loops forever. The retry
+  count lives in our own durable `x-retry-count` header. Consistent with the earlier F0.4 entry; §4 now says so
+  explicitly instead of teaching the trap.
+- **(2) Fan-in idempotency = conditional `tasks.status` UPDATE in the decrement tx, not Redis `SETNX` (H3).**
+  The durable authority is `UPDATE tasks … WHERE status<>'DONE'` with the `pending_count` decrement gated on
+  rowcount==1 (B4). Redis is "safe to lose" → an evicted `SETNX` key would let a redelivery double-decrement →
+  early `StitchReady` → incomplete drama wrongly `COMPLETED`. Redis `seen_once` may remain only as a
+  non-authoritative fast-path. §4 previously listed `SETNX task:done:<id>` as *the* guard — corrected.
+- **(3) Parse is a re-publishable emitter, never inbox-skipped (H2/H15).** A redelivery that finds its Task rows
+  (`INSERT … ON CONFLICT DO NOTHING`) MUST still re-publish all N `TtsRequested`; an inbox-skip would strand the
+  un-emitted children → stall in `GENERATING`. `pending_count` is seeded once, only on the first `PENDING→PARSING`
+  CAS (`begin_parse`, H15) — a re-run must not reset it. The `processed_events` inbox is the dedup authority for
+  effect-once *consumers*, not applied to parse's emit step. §4 originally implied a blanket inbox over parse.
+- **(4) Add the PENDING-sweeper as the gateway's outbox-via-state reconciler (H1).** The gateway dual-write
+  (`COMMIT Job(PENDING)` then publish) isn't atomic; "ack last" is a consumer rule and can't cover the producer.
+  A periodic sweeper re-publishes `JobCreated` for jobs stuck `PENDING` past a timeout (the Job row is its own
+  outbox), selects ids only / never mutates status, and is safe precisely because parse is idempotent (G8/R3.4).
+  Was entirely absent from §4.
+- **(5) Add the DLQ ↔ fan-in rule (H4).** A poisoned TTS block that exhausts retries onto `q.dlq` must still
+  resolve the barrier: a resolver consuming `q.dlq` *off the hot queue* marks the task `FAILED` and still
+  decrements `pending_count` (emitting `StitchReady` at 0; stitch skips FAILED-block keys) so the job never hangs
+  in `GENERATING` (W7). Was absent from §4.
+- **(6) Add stitch idempotency + FSM compare-and-set (H5/H-FSM).** Every status write is a CAS
+  (`UPDATE … WHERE status IN (legal predecessors)`), never read-then-write; rowcount-0 is a *normal* concurrent
+  outcome, not an error. A redelivered `StitchReady` on an already-`COMPLETED` job short-circuits — no double
+  asset, no illegal `COMPLETED→COMPLETED` (W5/H-FSM). Was absent from §4.
+- **(7) Add the SSRF / manuscript-size / block-count security notes (H-SSRF/H13/H14).** SSRF: allowlist host +
+  resolve all A/AAAA records + reject private/loopback/etc + `follow_redirects=False` + hard timeout
+  (defeats DNS-rebinding). manuscript-size: `Content-Length` pre-check → 413 before buffering (H13). block-count:
+  fan-out capped at `MAX_BLOCKS` (H14). Plus the restated MUST: a webhook/notification failure must not fail the
+  job. Were absent from §4.
+- **Verified:** `uv run pytest tests/unit/test_spec_consistency.py` → 3 passed (x-death gating gone; all 7 topics
+  present; manuscript-size + block-count present). The guard normalizes whitespace before matching because §4
+  wraps prose across lines (the old `Gate\n  on the \`x-death\`` split would otherwise evade a naive substring
+  check). Changed files: docs/SPEC.md (§4 rewrite), tests/unit/test_spec_consistency.py (new), this entry.
+  commit 700e587 base; uncommitted (user handles git).
