@@ -69,6 +69,25 @@
 - **Why:** No single repo matches the full assignment; the integration IS the assignment. Our boundaries
   (test_architecture.py) and MUST rules constrain HOW the borrowed patterns land. Climb the Rung ladder TDD.
 
+### 2026-06-25 · H-XDEATH — retry counter authority = x-retry-count message header (F0.4)
+- **What:** `x-retry-count` custom header (integer, incremented by `route_retry_or_dlq` on each
+  requeue) is the **sole gating authority** for retry logic. `x-death.count` is permanently banned.
+  `Task.attempts` Postgres column is **deferred** — not added unless `/stats` (R5.1) needs it.
+- **Why:** On RabbitMQ ≥3.13 (and 4.x), `x-death.count` is frozen at 1 for every redelivery; using
+  it for retry gating means the DLQ threshold is never reached (messages retry forever). This is a
+  silent correctness failure, not a performance issue. The custom header travels with the message,
+  survives broker restarts under persistent delivery, and is correctly incremented by the existing
+  `infra/broker.py` implementation.
+- **Why deferred (Task.attempts):** A durable column would enable retry-count queries after message
+  expiry (e.g., for `/stats` forensics), but `/stats` (R5.1) is the last rung and its exact needs
+  are not yet known. Adding the column now without a consumer is speculative schema. The header is
+  sufficient for all current gating requirements.
+- **Constraint:** If `Task.attempts` is ever added, the header WINS for gating; the column is
+  read-only telemetry and must never diverge into a second authority.
+- **Rejected:** `x-death.count` (broken ≥3.13); Python-side in-memory counter (lost on crash);
+  eager `Task.attempts` column (no consumer yet, violates YAGNI).
+- **Dimension:** Reliability (retry gating is a hard boundary — silent failure = messages loop forever).
+
 ### 2026-06-24 · First slice molded from `base-aiopika-pattern`: broker adapter + event contracts
 - **What:** `core/infra/broker.py` (connect/declare_minimal/publish/consume) + `core/domain/events.py`
   (R1.4 pydantic contracts) + worker rewired to the adapter + integration test (testcontainers RabbitMQ).

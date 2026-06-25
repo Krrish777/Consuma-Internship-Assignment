@@ -148,6 +148,28 @@
       "evidence": "uv run mypy --strict -> 0 errors; uv run pytest tests/unit -k smoke -> 6 passed (defaults, env-override, allowlist-tuple); make check 54/54; commit ed6693e HEAD"
     },
     {
+      "id": "F0.3",
+      "rung": 0,
+      "behavior": "Remove dead domain/models.py stub — it claimed to hold Job/Task/ProcessedEvent but those live in core/infra/db.py. The stub is a trap for future engineers. Delete it; no imports reference it.",
+      "verification": [
+        "uv run pytest tests/unit -k architecture (4 passed)",
+        "uv run mypy --strict (0 errors)"
+      ],
+      "status": "passing",
+      "evidence": "grep found 0 imports; file deleted; uv run pytest tests/unit -k architecture -> 4 passed; mypy 39 files 0 errors; commit ed6693e HEAD"
+    },
+    {
+      "id": "F0.4",
+      "rung": 0,
+      "behavior": "Settle retry-counter source of truth (H-XDEATH): document in DECISIONS.md that x-retry-count header is the gating authority (x-death.count is frozen on RabbitMQ >=3.13). Task.attempts column deferred as optional telemetry.",
+      "verification": [
+        "uv run pytest tests/integration -k topology (5 passed, retry routing unchanged)",
+        "grep for x-death.count in broker.py shows 0 usages"
+      ],
+      "status": "passing",
+      "evidence": "DECISIONS.md H-XDEATH entry written; grep broker.py for x-death.count -> 0 code usages (comments only); mypy 39 files 0 errors; topology last green at 61d73fe (no broker.py changes); commit ed6693e HEAD"
+    },
+    {
       "id": "R2.3",
       "rung": 2,
       "behavior": "Parse handler: split blocks, write N Task rows + pending_count=N in ONE transaction, fan-out TtsRequested xN, advance GENERATING. 0-block manuscript -> STITCHING directly (no hang).",
