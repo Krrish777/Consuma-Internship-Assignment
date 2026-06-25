@@ -402,8 +402,8 @@
       "rung": 3,
       "behavior": "E2E harness & fixtures (BOM 11-T4): tests/e2e/conftest.py + helpers.py provide the shared L4 scaffolding every probe reuses — a `stack` fixture that ensures the 6-service compose stack is healthy AND running CURRENT code (rebuilds the app images; the pre-Phase-4 image is an idle skeleton that consumes nothing), an httpx client to http://localhost:8000, wait_for_status(job_id, target, timeout) poller, publish_raw(event, queue) duplicate-injector (localhost broker), kill_container/restart docker helpers, and a poison_manuscript() builder. Everything tagged @pytest.mark.e2e so the no-Docker make check stays green.",
       "verification": ["uv run pytest -m e2e -k harness_smoke (POST a trivial job -> reaches COMPLETED through the live stack)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest -m e2e -k harness_smoke -> 1 passed in 104s: a real 2-block manuscript POSTed to the LIVE compose gateway travels gateway->q.parse->worker(parse->tts->stitch)->COMPLETED, observed via GET /status polling. tests/e2e/conftest.py (stack: docker compose up -d --build + gateway /health poll, ensures CURRENT code since the pre-Phase-4 image is an idle skeleton; client; wait_for_status poller) + helpers.py (kill/stop/start/restart_container, poison_manuscript via POISON_MARKER). L4 surfaced + fixed TWO real deploy bugs L3 could not: (1) httpx absent from services/worker runtime deps -> worker crash-looped on import (added httpx>=0.27, re-locked); (2) NO schema in compose Postgres -> POST /jobs 500 'relation jobs does not exist' (init.sh never migrated) -> added idempotent create_tables to the gateway lifespan (single schema owner). make check green: ruff+fmt clean, mypy 70 files 0 errors, 106 unit passed. See DECISIONS 2026-06-25 'Phase 6 / T1'. commit 700e587 base (fixes uncommitted; user handles git)."
     },
     {
       "id": "R3.1",

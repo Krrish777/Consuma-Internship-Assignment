@@ -310,3 +310,33 @@ each card's evidence states its L3/L4 split explicitly (no level silently skippe
 - **Verified:** `make check` green (ruff + ruff format + mypy --strict **67 files** + 106 unit); L3 per card —
   stats 3, ingestion 9 (incl. 2 H13), sweeper 4; full gateway trio (ingestion+stats+sweeper) **16 passed** with
   the sweeper task live in the lifespan (no regression). Anchor commit e48428e (user handles git).
+
+### 2026-06-25 · Phase 6 / T1 — e2e harness + two real deploy bugs the live stack exposed
+- **What:** Built the L4 harness (`tests/e2e/conftest.py` + `helpers.py`) that drives the REAL compose stack
+  (POST to `localhost:8000`, poll `/status`, `docker kill` containers), proven by `harness_smoke` (a 2-block
+  job reaches COMPLETED end-to-end). TDD: wrote the smoke test → RED (`fixture 'client' not found`) → built the
+  harness → GREEN. Tagged `e2e` so no-Docker `make check` skips it.
+- **`stack` fixture rebuilds, doesn't just reuse.** The 8h-old running worker was the **pre-Phase-4 idle
+  skeleton** (`"connected; idle — Rung 0 boot"`) — it consumes nothing, so a naive reuse hangs every probe in
+  PENDING forever. The fixture does `docker compose up -d --build` (fast layer-cache no-op when unchanged) then
+  health-polls the gateway, guaranteeing CURRENT code under test. **Lesson: L4 must test the built artifact, not
+  whatever happens to be running.**
+- **Bug #1 — `httpx` missing from worker runtime deps.** `worker/handlers/stitch.py` imports `httpx` (W5b
+  webhook), but `services/worker/pyproject.toml` declared only `aio-pika` + `core`. The worker **crash-looped on
+  import** in its container. L3 never caught it because integration tests run in the root venv (httpx is a test
+  dep there). Fix: add `httpx>=0.27` to the worker project deps; `uv lock`. **This is exactly the class of bug
+  L3 cannot see and L4 exists to catch.**
+- **Bug #2 — no schema in the compose Postgres.** `POST /jobs` 500'd with `relation "jobs" does not exist`.
+  Nothing migrated the deployment DB: `init.sh` brings up + health-checks + runs unit tests but never creates
+  tables; there is **no real Alembic migration** in the repo (only `create_tables` = `metadata.create_all`,
+  called solely by integration-test conftests). So the live stack had **never worked end-to-end** — only masked
+  because the worker was an idle skeleton, so no job ever ran. Fix: the **gateway lifespan now calls
+  `create_tables` on startup** (idempotent `metadata.create_all`, checkfirst). **Gateway is the single schema
+  owner** — it must be up to accept jobs and it runs the sweeper, and the worker only queries Postgres after a
+  job exists; one creator avoids concurrent `CREATE TABLE` races. Fixing this in the test fixture instead would
+  have hidden a broken `./init.sh` from a real user — the deployment, not just the test, must work. **Honest
+  limitation:** `metadata.create_all` on boot is the accepted simplification for this simulation; a production
+  system would ship a versioned Alembic migration (the claimed R1.1 migration was never actually built).
+- **Verified:** `harness_smoke` 1 passed (live stack); `make check` green (ruff+fmt, mypy 70 files, 106 unit).
+  Fixes touch `services/worker/pyproject.toml`, `services/gateway/src/gateway/main.py` (R2.2a lifespan), `uv.lock`.
+  commit 700e587 base; fixes uncommitted (user handles git).
