@@ -15,7 +15,7 @@ from testcontainers.redis import RedisContainer
 
 from core.domain.hash import content_hash
 from core.infra import redis as redis_infra
-from core.infra.redis import Cache, Semaphore
+from core.infra.redis import Cache, Semaphore, seen_once
 
 pytestmark = pytest.mark.integration
 
@@ -266,3 +266,15 @@ async def test_stampede_yields_one_vendor_call_others_read_cache(
     synths = [r for r in results if r[0] == "synth"]
     assert len(synths) == 1  # exactly one vendor call for the whole burst
     assert all(r[1] == url for r in results)  # everyone ends up with the same url
+
+
+# --- R4inbox: Redis idempotency fast-path ------------------------------------
+
+
+async def test_seen_once_is_true_first_then_false(client: redis_infra.Redis) -> None:
+    # True = first sighting (process it); False = already seen (skip). This is a
+    # NON-authoritative fast-path; the durable inbox (db.mark_event) is the authority.
+    assert await seen_once(client, "task-abc") is True
+    assert await seen_once(client, "task-abc") is False
+    # A different task_id is independent.
+    assert await seen_once(client, "task-def") is True
