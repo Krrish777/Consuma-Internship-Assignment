@@ -124,3 +124,35 @@ async def test_dependency_bounce_minio_job_converges(
     assert (await client.get(f"/status/{job_id}")).json()["final_key"], (
         "no asset after MinIO bounce"
     )
+
+
+async def test_redis_wipe_job_still_completes(
+    client: httpx.AsyncClient,
+    wait_for_status: Callable[..., Awaitable[str]],
+) -> None:
+    # H1: Redis is "safe to lose" — a wipe must self-heal. Warm the stack, FLUSHALL
+    # Redis (drops tts:slots + its init marker, as an eviction/restart would), confirm
+    # the pool is genuinely empty, then submit a NEW multi-block job. Before H1 this
+    # would hang forever (acquire() BLPOPs an empty pool that boot-only ensure_slots
+    # never refills); with the periodic run_reseeder it re-seeds and the job converges.
+    warm = await client.post("/jobs", json={"manuscript": "Warm up the pool."})
+    assert warm.status_code == 202, warm.text
+    assert await wait_for_status(warm.json()["job_id"], target="COMPLETED", timeout=90.0) == (
+        "COMPLETED"
+    )
+
+    flush_redis()
+    assert redis_llen("tts:slots") == 0, "FLUSHALL did not empty the slots pool — vacuous probe"
+
+    manuscript = "\n\n".join(f"Recovered scene {i}." for i in range(4))
+    resp = await client.post("/jobs", json={"manuscript": manuscript})
+    assert resp.status_code == 202, resp.text
+    job_id = resp.json()["job_id"]
+
+    # Generous timeout: the re-seed fires on the worker's RESEED_INTERVAL_S cadence
+    # (default 30s), so the post-wipe job may wait up to one interval for slots.
+    status = await wait_for_status(job_id, target="COMPLETED", timeout=150.0)
+    assert status == "COMPLETED", (
+        f"job ended {status} after a Redis wipe, expected COMPLETED — re-seeder did not refill the pool"
+    )
+    assert (await client.get(f"/status/{job_id}")).json()["final_key"], "no asset after Redis wipe"
