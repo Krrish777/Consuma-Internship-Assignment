@@ -22,6 +22,8 @@ Run by compose as: uvicorn gateway.main:app --host 0.0.0.0 --port 8000
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -43,6 +45,7 @@ from core.infra.queries import job_counts_by_status
 from core.infra.storage import ensure_bucket, put_text
 
 from gateway.schemas import CreateJobRequest, JobAccepted, JobStatusResponse, StatsResponse
+from gateway.sweeper import run_sweeper
 
 configure_logging()
 log = get_logger("gateway")
@@ -71,9 +74,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.minio = minio_client
     app.state.settings = settings
 
+    # G8/R3.4 — PENDING-sweeper closes the producer-side dual-write seam (H1).
+    sweeper_task = asyncio.create_task(
+        run_sweeper(
+            engine=engine,
+            exchange=exchange,
+            interval_s=settings.SWEEP_INTERVAL_S,
+            pending_timeout_s=settings.PENDING_TIMEOUT_S,
+        )
+    )
+
     log.info("gateway startup complete")
     yield
 
+    sweeper_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await sweeper_task
     await connection.close()
     await engine.dispose()
     log.info("gateway shutdown complete")

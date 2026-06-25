@@ -386,8 +386,8 @@
       "rung": 2,
       "behavior": "Manuscript max-size guard at ingestion (BOM backlog-H13): an unbounded manuscript body buffered in gateway memory is a DoS vector. Enforce MAX_MANUSCRIPT_BYTES (F0.2): reject oversized request bodies with a clean machine-readable 413 BEFORE the body is buffered into the pydantic model (a Content-Length pre-check in HTTP middleware, since checking len(body.manuscript) in the route is already too late to prevent the OOM). Preserve the load-bearing dual-write order (MinIO -> DB commit -> publish) for the accepted path.",
       "verification": ["uv run pytest tests/integration -k ingestion (a body over the cap -> 413 structured JSON; a normal body -> 202 as before)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k ingestion -> 9 passed (7 original + 2 new H13: a >1MB body -> 413 {error:'manuscript_too_large', max_bytes:1000000}; a normal body -> 202 unchanged) against real pg+rmq+minio via the gateway lifespan. guard_manuscript_size HTTP middleware in gateway/main.py inspects Content-Length BEFORE the body is buffered into CreateJobRequest (the route-level len() check would be too late to prevent OOM, H13 MUST); rejects with machine-readable 413 JSON (R2.2c contract). Bounds the realistic honest-Content-Length vector; chunked-no-Content-Length residual documented (the 'stream to MinIO' alternative). Dual-write order untouched on the accepted path. full gate: ruff+fmt clean, mypy 65 files 0 errors; commit e48428e HEAD anchor (user handles git)"
     },
     {
       "id": "R2.3",
@@ -426,8 +426,8 @@
       "rung": 3,
       "behavior": "PENDING-sweeper/reconciler (G8, closes the gateway dual-write seam BACKLOG H1): periodic task re-publishes JobCreated for jobs stuck PENDING past a generous timeout. The Job row IS its own outbox; idempotent parse (R3.2) makes a re-publish safe. 'Ack last' is a consumer rule and cannot cover the gateway producer.",
       "verification": ["uv run pytest tests/integration -k sweeper (insert Job(PENDING) with NO event published -> after one sweep JobCreated is on q.parse and the job progresses)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "G8 done. uv run pytest tests/integration/test_sweeper.py -> 4 passed (orphaned PENDING with NO event published -> sweep_once re-publishes JobCreated to q.parse, count>=1; swept job stays PENDING = MUST NOT mutate status; fresh PENDING within generous timeout left untouched count==0; GENERATING job never re-driven) against real postgres:17-alpine + rabbitmq:4. gateway/sweeper.py: sweep_once(engine,exchange,pending_timeout_s) selects only PENDING job_ids older than DB-side now()-timeout (no Python row-scan, no status write) and re-publishes JobCreated; safe ONLY because parse is idempotent/re-runnable (H2 ON CONFLICT + H15 begin_parse CAS). run_sweeper loops it every SWEEP_INTERVAL_S (sleep-first so it never fires on boot / in fast tests), launched as an asyncio.Task in the gateway lifespan and cancelled cleanly on shutdown. Regression: full gateway trio (ingestion+stats+sweeper) 16 passed with the sweeper live in the lifespan. H10 retention scheduling left as a separate optional chore (not folded in, to keep every added line tested). Live crash-seam e2e is Phase-6; here L3. full gate: make check 106 unit green, ruff+fmt clean, mypy 67 files 0 errors; commit e48428e HEAD anchor (user handles git)"
     },
     {
       "id": "R4.1",
