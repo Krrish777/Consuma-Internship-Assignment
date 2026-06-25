@@ -1,7 +1,7 @@
-"""X2 — handler dispatch / DI table (spec §8).
+"""Handler dispatch / DI table.
 
 Maps each pipeline queue to its context-injected handler so the consume loop
-(X1) stays generic: it iterates this table, registering one consumer per queue.
+stays generic: it iterates this table, registering one consumer per queue.
 A single table also makes the choreography legible — queue → handler → next
 event — in one place. Adapters are injected via ``ctx`` (never hardcoded inside
 handlers), which keeps the boundary clean and the handlers testable.

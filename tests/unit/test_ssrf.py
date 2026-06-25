@@ -1,4 +1,4 @@
-"""H-SSRF — callback URL guard (L2, pure; getaddrinfo mocked, no network).
+"""Callback URL guard (pure; getaddrinfo mocked, no network).
 
 A client-supplied callback_url handed to httpx is an SSRF vector (internal
 services, cloud metadata endpoints). is_allowed must reject private/loopback/

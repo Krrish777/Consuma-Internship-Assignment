@@ -57,7 +57,7 @@ def restart_container(name: str) -> None:
 def flush_redis(name: str = REDIS) -> None:
     """Wipe ALL Redis keys (``FLUSHALL``) — deterministically simulates a Redis loss.
 
-    Models the H1 failure precisely: ``tts:slots`` and its init marker vanish, as
+    Models the failure precisely: ``tts:slots`` and its init marker vanish, as
     they would on an eviction or a restart-without-persistence. Preferred over
     ``docker restart`` for this probe because redis:7-alpine's default RDB snapshots
     could reload on restart (the container layer survives a restart), which would
@@ -73,11 +73,11 @@ def redis_llen(key: str, name: str = REDIS) -> int:
 
 
 def scale_workers(n: int) -> None:
-    """Scale the worker service to N replicas (the deployment shape for R4.1/I4).
+    """Scale the worker service to N replicas (the deployment shape).
 
     ``--scale`` only adds/removes replicas; it doesn't recreate the running ones,
     so it avoids the recreate race. All replicas share the ONE global Redis
-    semaphore — that is exactly what the R4.1 probe asserts (Constraint A is global,
+    semaphore — that is exactly what the probe asserts (Constraint A is global,
     not per-process).
     """
     subprocess.run(
@@ -94,7 +94,7 @@ def poison_manuscript() -> str:
     """A manuscript that fails parse on EVERY attempt → DLQ after 3 retries.
 
     The marker triggers ``simulate_parse`` to raise ``VendorError`` unconditionally
-    (R2.0 single retryable class), so the JobCreated message exhausts the 1/4/16s
-    ladder and dead-letters — the substrate for the R3.3 poison-pill probe.
+    (single retryable class), so the JobCreated message exhausts the 1/4/16s
+    ladder and dead-letters — the substrate for the poison-pill probe.
     """
     return f"This drama is cursed.\n\n{POISON_MARKER}\n\nIt fails every attempt."

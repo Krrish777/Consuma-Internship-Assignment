@@ -30,7 +30,7 @@ def _section_4() -> str:
 
 def test_spec_no_longer_teaches_x_death_count_gating() -> None:
     body = _section_4()
-    # The old bug: "Gate on the `x-death` count before re-publishing" (H-XDEATH: x-death.count is
+    # The old bug: "Gate on the `x-death` count before re-publishing" (x-death.count is
     # frozen on RabbitMQ >=3.13 under persistent delivery, so gating on it loops forever).
     assert "gate on the `x-death`" not in body, (
         "SPEC §4 still instructs gating on x-death (H-XDEATH bug). FIX: gate on the custom "
@@ -59,7 +59,7 @@ def test_spec_section_4_documents_all_seven_corrections() -> None:
 
 def test_spec_section_4_covers_size_and_block_count_security_notes() -> None:
     body = _section_4()
-    # Correction 7 also covers the DoS surfaces beyond SSRF (H13 manuscript size, H14 block count).
+    # Correction 7 also covers the DoS surfaces beyond SSRF (manuscript size, block count).
     for anchor in ("manuscript-size", "block-count"):
         assert anchor in body, (
             f"SPEC §4 security notes omit '{anchor}'. FIX: document the manuscript-size (H13) and "

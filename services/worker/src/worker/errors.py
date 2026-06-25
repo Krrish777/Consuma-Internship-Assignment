@@ -1,6 +1,6 @@
-"""X7 — exception taxonomy: retryable vs poison (spec §1; CLAUDE.md MUST #5).
+"""Exception taxonomy: retryable vs poison.
 
-The consume loop (W2 ``ack_last``) must decide, when a handler raises, whether to
+The consume loop (``ack_last``) must decide, when a handler raises, whether to
 **retry** (transient → the 1/4/16s ladder) or **dead-letter immediately** (poison
 → DLQ). One predicate, :func:`is_poison`, drives that branch.
 
@@ -15,8 +15,8 @@ Unknown / unclassified exceptions are treated as **transient** (fail-safe): we
 retry up to ``MAX_RETRIES`` and then DLQ, rather than ack-and-drop a message
 because of a bug we did not anticipate (that would silently lose work).
 
-Reconciliation with R2.0 (docs/DECISIONS.md 2026-06-25): the consistently-failing
-*manuscript* is NOT a ``PoisonError``. Per SPEC §1 it raises the single retryable
+Reconciliation (docs/DECISIONS.md 2026-06-25): the consistently-failing
+*manuscript* is NOT a ``PoisonError``. It raises the single retryable
 ``core.domain.vendor.VendorError`` and dead-letters only after exhausting the
 ladder — same routing as a random transient failure, it simply never succeeds.
 ``PoisonError`` is reserved for messages that are structurally impossible to process.

@@ -1,11 +1,11 @@
-"""H1 / H-RESEED — worker semaphore re-seed loop (L2, pure; no Docker).
+"""Worker semaphore re-seed loop (pure; no Docker).
 
 Proves the load-bearing behavior of ``run_reseeder``, the periodic loop that
-closes the Redis-bounce gap (ARCHITECTURE.md §5): after a Redis wipe strips
+closes the Redis-bounce gap (ARCHITECTURE.md): after a Redis wipe strips
 ``tts:slots`` + its init marker, the next pass re-runs the marker-guarded
 ``Semaphore.ensure_slots()`` so a running worker stops BLPOP-ing an empty pool.
 
-The live ``docker restart redis`` recovery is covered by the L4 e2e probe; here
+The live ``docker restart redis`` recovery is covered by the e2e probe; here
 we pin the loop's contract: sleep-first, re-seed each pass, survive a failing
 pass, and cancel cleanly (the worker cancels it on the shutdown event).
 """

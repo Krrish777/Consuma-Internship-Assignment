@@ -1,16 +1,16 @@
-"""Worker entrypoint — aio-pika consume loop (spec §5, §8).
+"""Worker entrypoint — aio-pika consume loop.
 
-X1 replaces the Rung-0 idle skeleton with a real run loop:
+The run loop:
 
-    build_context (X3) → register one consumer per queue (X2 dispatch) → await
+    build_context → register one consumer per queue → await
     shutdown → close_context.
 
-Each queue gets its OWN channel so prefetch can be sized per-queue (W1/H-PREFETCH:
-``set_qos`` is channel-wide, so q.tts needs a separate channel to run a smaller
+Each queue gets its OWN channel so prefetch can be sized per-queue (``set_qos``
+is channel-wide, so q.tts needs a separate channel to run a smaller
 prefetch than q.parse). Manual ack (``no_ack=False``) is retained — the handler
 acks LAST, after its Postgres commit + downstream publish.
 
-Clean shutdown matters for crash-recovery (R3.1): on SIGTERM (compose ``docker
+Clean shutdown matters for crash-recovery: on SIGTERM (compose ``docker
 stop``) the worker sets a shutdown event, stops consuming, and closes the broker
 connection, so any in-flight unacked message is released for redelivery rather
 than lost.
@@ -37,7 +37,7 @@ log = get_logger("worker")
 
 
 def prefetch_for(queue_name: str, settings: Settings) -> int:
-    """Per-queue prefetch (W1 / H-PREFETCH).
+    """Per-queue prefetch.
 
     q.tts is sized near the TTS semaphore size (slots + a tiny headroom): a worker
     parking many more unacked TTS messages than it can ever service just blocks them
@@ -78,8 +78,8 @@ def install_signal_handlers(loop: asyncio.AbstractEventLoop, shutdown: asyncio.E
 async def register_consumers(ctx: WorkerContext, handlers: dict[str, Handler]) -> None:
     """Register each handler on its queue, one dedicated channel per queue.
 
-    A per-queue channel lets prefetch be sized per queue (W1): ``prefetch_for``
-    sizes q.tts down toward the semaphore size (H-PREFETCH).
+    A per-queue channel lets prefetch be sized per queue: ``prefetch_for``
+    sizes q.tts down toward the semaphore size.
     """
     for queue_name, handler in handlers.items():
         channel = await ctx.connection.channel()
@@ -96,14 +96,14 @@ async def run() -> None:
     install_signal_handlers(asyncio.get_running_loop(), shutdown)
 
     handlers = build_handlers(ctx)
-    # W7: the DLQ resolver runs OFF the hot queue so healthy traffic is unaffected.
+    # the DLQ resolver runs OFF the hot queue so healthy traffic is unaffected.
     handlers[Q_DLQ] = make_dlq_handler(ctx)
     await register_consumers(ctx, handlers)
 
     # Background semaphore maintenance (cancelled cleanly on shutdown, below):
-    #   H1 run_reseeder — re-seed tts:slots if Redis is ever wiped (else acquire()
+    #   run_reseeder — re-seed tts:slots if Redis is ever wiped (else acquire()
     #     BLPOPs an empty pool forever); no-op on a healthy pool (marker-guarded).
-    #   H2 run_reaper — return a crashed holder's orphaned token to the pool (else
+    #   run_reaper — return a crashed holder's orphaned token to the pool (else
     #     a worker crash mid-TTS shrinks the effective pool until the next reboot).
     maintenance_tasks = [
         asyncio.create_task(
