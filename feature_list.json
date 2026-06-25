@@ -322,23 +322,23 @@
       "rung": 3,
       "behavior": "Exception taxonomy (BOM 12-X7): worker/errors.py defines TransientError (retryable -> retry ladder) and PoisonError (non-retryable -> DLQ immediately). Unknown/unclassified exceptions are treated as transient up to MAX_RETRIES then DLQ'd (fail-safe: never silently ack-drop a message because of an unclassified bug).",
       "verification": ["uv run pytest tests/unit -k 'errors or taxonomy' (two classes; documented routing: poison->DLQ now, transient/unknown->ladder)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k errors -> 3 passed (TransientError/PoisonError are Exceptions; is_poison(PoisonError)=True; is_poison(TransientError|VendorError|ValueError)=False -> unknown treated as transient, fail-safe). worker/errors.py. RECONCILED with R2.0 (DECISIONS): the consistently-failing manuscript is retryable VendorError (ladder-then-DLQ per SPEC §1), NOT PoisonError; PoisonError reserved for structurally unprocessable messages. full gate: ruff+fmt clean, mypy 53 files 0 errors, pytest tests/unit 90 passed; commit f62825c HEAD anchor (user handles git)"
     },
     {
       "id": "W2",
       "rung": 3,
       "behavior": "Ack-last handler skeleton (BOM 08-W2 ⭐): worker/handlers/_base.py ack_last wrapper enforces the system's most important ordering (SPEC §4): do work -> COMMIT Postgres -> PUBLISH next -> ACK message (ack dead last). On TransientError -> route_retry_or_dlq THEN ack the original (work carried by the copy); on PoisonError -> publish to q.dlq THEN ack; on unknown -> treat as transient. Uses async with message.process(ignore_processed=True) so the explicit ack/nack doesn't double-process.",
       "verification": ["uv run pytest tests/unit -k 'ack_last or base_handler' (success->ack; transient->ladder-then-ack; poison->dlq-then-ack; ack is last on every path, with a fake message)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k base_handler -> 7 passed (success->['ack']; TransientError->['route','ack'] max_retries=MAX_RETRIES; PoisonError->['route','ack'] max_retries=0 immediate DLQ; unknown ValueError->transient; parametrized ack-is-always-last). ack_last(ctx,live_queue,do_work) in worker/handlers/_base.py: async with message.process(ignore_processed=True) + explicit terminal ack; poison reuses route_retry_or_dlq with max_retries=0 (no broker change). Crash-mid-handler L4 is Phase-6 R3.1/R3.3; here L2. full gate: ruff+fmt clean, mypy 54 files 0 errors, pytest tests/unit 97 passed; commit f62825c HEAD anchor (user handles git)"
     },
     {
       "id": "W3",
       "rung": 2,
       "behavior": "Parse handler / fan-out emitter (BOM 08-W3 ⭐): consume JobCreated, load manuscript from MinIO, sim_parse (transient/poison), split_blocks (D3); if 0 blocks -> CAS job straight to STITCHING (+publish StitchReady) and return (fan-in of 0 must not hang); else in ONE tx INSERT N Task rows (ON CONFLICT DO NOTHING on job_id+block_index) and begin_parse CAS sets pending_count=N only on first run (H15); ALWAYS re-publish all N TtsRequested (redelivery that finds rows still emits events, H2); advance PARSING->GENERATING; ack last. Cap block count at MAX_BLOCKS (H14). NEVER inbox-skip parse.",
       "verification": ["uv run pytest tests/integration -k 'parse_fanout or zero_block_terminates' (N blocks -> N tasks + pending_count=N + N TtsRequested; redelivered JobCreated -> still N tasks, counter unchanged, events re-published; 0-block -> STITCHING/terminal)"],
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": ""
     },
     {
