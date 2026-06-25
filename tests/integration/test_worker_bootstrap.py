@@ -1,7 +1,7 @@
-"""X3 — worker bootstrap integration test (L3, all four backing services).
+"""Worker bootstrap integration test (L3, all four backing services).
 
 Proves build_context() wires every adapter the handlers need against real
-containers, and that Semaphore.ensure_slots() (X4) seeds exactly N tokens
+containers, and that Semaphore.ensure_slots() seeds exactly N tokens
 on boot and stays idempotent across a simulated worker restart.
 """
 
@@ -33,7 +33,7 @@ async def test_worker_bootstrap_wires_all_adapters(worker_stack: Settings) -> No
     try:
         assert isinstance(ctx, WorkerContext)
 
-        # Redis client live + semaphore seeded exactly N on boot (X4 ensure_slots).
+        # Redis client live + semaphore seeded exactly N on boot (ensure_slots).
         assert await redis_infra.ping(ctx.redis) is True
         assert await ctx.redis.llen(SLOTS_KEY) == worker_stack.TTS_CONCURRENCY
 
@@ -59,7 +59,7 @@ async def test_ensure_slots_seeds_once_across_restart(worker_stack: Settings) ->
     await close_context(ctx1)
 
     # A second bootstrap (worker restart) must NOT re-seed to 2N — ensure_slots
-    # is init-once (X4), not top-up.
+    # is init-once, not top-up.
     ctx2 = await build_context(worker_stack)
     try:
         assert await ctx2.redis.llen(SLOTS_KEY) == worker_stack.TTS_CONCURRENCY

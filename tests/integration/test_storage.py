@@ -1,4 +1,4 @@
-"""R1.3 — MinIO storage adapter integration test (MinIO via testcontainers).
+"""MinIO storage adapter integration test (MinIO via testcontainers).
 
 Proves:
   - ensure_bucket is idempotent (safe to call twice)
@@ -63,7 +63,7 @@ async def test_key_exists(minio_client) -> None:  # type: ignore[no-untyped-def]
 
 
 async def test_tts_objects_never_expire_so_cache_hits_stay_live(minio_client) -> None:  # type: ignore[no-untyped-def]
-    """H-DANGLE: object lifetime >= cache TTL.
+    """Object lifetime >= cache TTL.
 
     A tts:cache:<hash> HIT must always resolve to a live object. The deployment
     policy is the simplest correct one — no bucket lifecycle is configured, so tts/

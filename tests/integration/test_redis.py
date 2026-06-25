@@ -1,8 +1,8 @@
 """Phase 2 Redis coordination — integration tests (Redis via testcontainers).
 
-One module-scoped real Redis container backs every card here (R1 client, R2
-semaphore, X4 init, X5 reaper, R3 cache, H8 stampede, R4inbox fast-path). Each
-test flushes the keyspace first so cards don't bleed state into each other.
+One module-scoped real Redis container backs every test here (client, semaphore,
+init, reaper, cache, stampede, inbox fast-path). Each
+test flushes the keyspace first so tests don't bleed state into each other.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ async def client(redis_url: str) -> AsyncIterator[redis_infra.Redis]:
         await c.aclose()
 
 
-# --- R1: client adapter -------------------------------------------------------
+# --- client adapter -------------------------------------------------------
 
 
 async def test_get_redis_pings(client: redis_infra.Redis) -> None:
@@ -51,11 +51,11 @@ async def test_get_redis_keeps_bytes(client: redis_infra.Redis) -> None:
     assert await client.get("k") == b"v"
 
 
-# --- R2: leased N-token semaphore --------------------------------------------
+# --- leased N-token semaphore --------------------------------------------
 
 
 async def test_semaphore_bounds_to_slots(client: redis_infra.Redis) -> None:
-    # X4 will seed the pool in production; here we seed it by hand.
+    # ensure_slots seeds the pool in production; here we seed it by hand.
     await client.rpush("tts:slots", "0", "1")
     sem = Semaphore(client, slots=2, lease_ttl=30)
 
@@ -116,7 +116,7 @@ async def test_slot_context_manager_releases_on_exception(client: redis_infra.Re
     assert await client.exists("tts:lease:0") == 0
 
 
-# --- X4: semaphore init idempotency (the 3xN-tokens bug) ----------------------
+# --- semaphore init idempotency (the 3xN-tokens bug) ----------------------
 
 
 async def test_ensure_slots_converges_to_exactly_n_under_concurrency(
@@ -146,7 +146,7 @@ async def test_ensure_slots_is_init_once_not_top_up(client: redis_infra.Redis) -
     await sem.release(token)
 
 
-# --- X5: lease reaper (heartbeat renew + atomic reclaim) ----------------------
+# --- lease reaper (heartbeat renew + atomic reclaim) ----------------------
 
 
 async def test_reap_reclaims_a_crashed_holders_token(client: redis_infra.Redis) -> None:
@@ -196,7 +196,7 @@ async def test_two_reapers_reclaim_a_token_at_most_once(
     assert await client.llen("tts:slots") == 3  # no double-return
 
 
-# --- R3: content-hash cache (Constraint B) -----------------------------------
+# --- content-hash cache (Constraint B) -----------------------------------
 
 
 async def test_cache_set_then_get_returns_url(client: redis_infra.Redis) -> None:
@@ -232,7 +232,7 @@ async def test_cache_entry_expires_after_ttl(client: redis_infra.Redis) -> None:
     assert await cache.cache_get(h) is None  # expired -> rebuildable from MinIO
 
 
-# --- H8: cache-stampede in-flight lock ---------------------------------------
+# --- cache-stampede in-flight lock ---------------------------------------
 
 
 async def test_only_one_caller_wins_the_inflight_lock(client: redis_infra.Redis) -> None:
@@ -268,7 +268,7 @@ async def test_stampede_yields_one_vendor_call_others_read_cache(
     assert all(r[1] == url for r in results)  # everyone ends up with the same url
 
 
-# --- R4inbox: Redis idempotency fast-path ------------------------------------
+# --- Redis idempotency fast-path ------------------------------------
 
 
 async def test_seen_once_is_true_first_then_false(client: redis_infra.Redis) -> None:

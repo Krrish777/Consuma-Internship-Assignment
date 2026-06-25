@@ -1,11 +1,11 @@
-"""W4 — TTS handler / cache → slot → generate → fan-in (L3, real containers).
+"""TTS handler / cache → slot → generate → fan-in (L3, real containers).
 
 Proves:
   - tts_fan_in: N tasks decrement the barrier; exactly ONE StitchReady is emitted;
     all tasks land DONE with an audio_key and the audio object exists in MinIO.
   - tts_cache: two identical blocks → exactly ONE vendor synth (the second is a
     cache hit and must NOT re-synthesize / burn a slot).
-  - tts_emit (H-EMIT): redelivering an already-DONE task after the barrier was
+  - tts_emit: redelivering an already-DONE task after the barrier was
     crossed re-emits StitchReady (covers crash-after-decrement-before-publish).
 
 Setup runs the real parse handler first (PARSE_FAILURE_RATE overridden to 0.0 for
@@ -137,7 +137,7 @@ async def test_tts_emit_reemits_on_redelivery(tts_ctx: WorkerContext) -> None:
     assert len(first) == 1
 
     # Redeliver an already-DONE task: the claim no-ops (None), but the barrier is
-    # already 0 → H-EMIT re-emits StitchReady (stitch is idempotent).
+    # already 0 → the handler re-emits StitchReady (stitch is idempotent).
     await handle_tts(tts_ctx, TtsRequested(job_id=job_id, task_id=task_ids[0]))
     second = await _drain(q_stitch, 3)
     assert len(second) == 1

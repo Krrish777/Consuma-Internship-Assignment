@@ -1,16 +1,16 @@
-"""W3 — parse handler / fan-out emitter (L3, real containers).
+"""Parse handler / fan-out emitter (L3, real containers).
 
-Proves the subtlest correctness card:
+Proves the subtlest correctness path:
   - N-block manuscript → N Task rows + pending_count=N (one tx) + N TtsRequested,
     job advanced to GENERATING.
   - Redelivered JobCreated → still N tasks (ON CONFLICT), counter unchanged, events
-    re-published (H2: parse is a re-publishable emitter, never inbox-skipped).
+    re-published (parse is a re-publishable emitter, never inbox-skipped).
   - 0-block manuscript → no tasks, pending_count=0, one StitchReady, no TtsRequested
     (the fan-in barrier of 0 must terminate, not hang).
-  - Block count capped at MAX_BLOCKS (H14).
+  - Block count capped at MAX_BLOCKS.
 
 Determinism: PARSE_FAILURE_RATE is overridden to 0.0 so the 15% transient injection
-never makes these assertions flaky (the failure path is unit-covered by R2.0).
+never makes these assertions flaky (the failure path is unit-covered).
 """
 
 from __future__ import annotations

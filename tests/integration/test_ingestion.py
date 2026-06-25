@@ -1,12 +1,12 @@
-"""R2.2a / R2.2 / R2.2d — Gateway integration tests.
+"""Gateway integration tests.
 
 Uses all three testcontainers (Postgres + RabbitMQ + MinIO) with the REAL
 FastAPI lifespan to prove end-to-end gateway behaviour.
 
 Proves:
-  R2.2a  lifespan starts cleanly, app.state.exchange usable, shuts down without leak
-  R2.2   POST /jobs -> 202 + Job(PENDING) in PG + raw/<id>.txt in MinIO + JobCreated on q.parse
-  R2.2d  GET /status/<id> -> 200 with status; unknown id -> 404
+  - lifespan starts cleanly, app.state.exchange usable, shuts down without leak
+  - POST /jobs -> 202 + Job(PENDING) in PG + raw/<id>.txt in MinIO + JobCreated on q.parse
+  - GET /status/<id> -> 200 with status; unknown id -> 404
 
 Fixture layout:
   gateway_ctx (module-scoped) — starts all three containers, monkeypatches
@@ -82,17 +82,17 @@ def gateway_ctx() -> Generator[dict[str, Any], None, None]:
         mp.undo()
 
 
-# ── R2.2a: lifespan ──────────────────────────────────────────────────────────
+# ── lifespan ──────────────────────────────────────────────────────────
 
 
 def test_lifespan_health_check(gateway_ctx: dict[str, Any]) -> None:
-    """R2.2a: gateway started + exchange declared; health probe returns 200."""
+    """Gateway started + exchange declared; health probe returns 200."""
     r = gateway_ctx["client"].get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
 
 
-# ── R2.2: ingestion ───────────────────────────────────────────────────────────
+# ── ingestion ───────────────────────────────────────────────────────────
 
 
 def test_post_jobs_returns_202_with_job_id(gateway_ctx: dict[str, Any]) -> None:
@@ -173,7 +173,7 @@ def test_post_jobs_publishes_job_created_to_parse_queue(
     assert "event_id" in found  # pointers-only: no bytes in the message
 
 
-# ── R2.2d: status endpoint ───────────────────────────────────────────────────
+# ── status endpoint ───────────────────────────────────────────────────
 
 
 def test_get_status_returns_pending_for_new_job(gateway_ctx: dict[str, Any]) -> None:
@@ -195,7 +195,7 @@ def test_get_status_unknown_job_returns_404(gateway_ctx: dict[str, Any]) -> None
     assert r.status_code == 404
 
 
-# ── H13: manuscript max-size guard ───────────────────────────────────────────
+# ── manuscript max-size guard ───────────────────────────────────────────
 
 
 def test_post_jobs_oversized_manuscript_returns_413(gateway_ctx: dict[str, Any]) -> None:

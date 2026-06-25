@@ -1,4 +1,4 @@
-"""W5b — webhook notify / failure ≠ job failure (L3, real containers).
+"""Webhook notify / failure ≠ job failure (L3, real containers).
 
 After COMPLETED, the job optionally POSTs to the client callback_url. Proves:
   - delivered: an allowlisted+allowed URL receives the JSON payload.

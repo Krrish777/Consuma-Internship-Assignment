@@ -1,12 +1,12 @@
-"""W5 — stitch handler / idempotent finalize (L3, real containers).
+"""Stitch handler / idempotent finalize (L3, real containers).
 
 Proves:
   - happy path: StitchReady → job COMPLETED, final_key=out/<job>.mp3, and the
     object is the client-side concat of the job's chunks in block order.
   - idempotent: a redelivered StitchReady leaves one asset and one COMPLETED, and
-    does not attempt the illegal COMPLETED→COMPLETED transition (H5).
+    does not attempt the illegal COMPLETED→COMPLETED transition.
 
-W5b (webhook) is exercised in test_webhook.py.
+The webhook is exercised in test_webhook.py.
 """
 
 from __future__ import annotations

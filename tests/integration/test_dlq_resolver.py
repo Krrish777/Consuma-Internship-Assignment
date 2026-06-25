@@ -1,4 +1,4 @@
-"""W7 — DLQ → fan-in resolver (H4) (L3, real containers).
+"""DLQ → fan-in resolver (L3, real containers).
 
 A poisoned TTS block that exhausts its retries lands on q.dlq. If nothing
 decrements pending_count, the job stalls forever in GENERATING. The resolver

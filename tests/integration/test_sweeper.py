@@ -1,4 +1,4 @@
-"""G8 / R3.4 — PENDING-sweeper / reconciler (L3).
+"""PENDING-sweeper / reconciler (L3).
 
 Proves the outbox-via-state recovery: a Job stuck in PENDING with **no**
 JobCreated ever published gets re-driven by ``sweep_once`` — the event lands on
@@ -152,7 +152,7 @@ def test_sweep_once_ignores_non_pending(sweeper_ctx: dict[str, str]) -> None:
     assert count >= 0
 
 
-# --- H3 / H-PURGE: processed_events retention folded into the sweep loop -------
+# --- processed_events retention folded into the sweep loop -------
 
 
 async def _seed_event(pg_url: str, event_id: str, *, age_seconds: int) -> None:

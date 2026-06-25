@@ -1,4 +1,4 @@
-"""R1.1 — SQLAlchemy models integration test (Postgres via testcontainers).
+"""SQLAlchemy models integration test (Postgres via testcontainers).
 
 Proves:
   - Tables create (Job, Task, ProcessedEvent) via create_all
@@ -132,7 +132,7 @@ async def test_pending_count_atomic_decrement(engine: AsyncEngine) -> None:
     assert count == 1
 
 
-# --- R4inbox: durable idempotency inbox (the authority) ----------------------
+# --- durable idempotency inbox (the authority) ----------------------
 
 
 async def test_mark_event_dedupes_durably(engine: AsyncEngine) -> None:
@@ -144,7 +144,7 @@ async def test_mark_event_dedupes_durably(engine: AsyncEngine) -> None:
 
 
 async def test_purge_processed_events_removes_aged_rows(engine: AsyncEngine) -> None:
-    """H10 retention: rows older than the window are deleted; recent ones survive."""
+    """Retention: rows older than the window are deleted; recent ones survive."""
     async with get_session(engine) as session:
         session.add(ProcessedEvent(event_id="inbox-fresh"))
         session.add(
@@ -166,7 +166,7 @@ async def test_purge_processed_events_removes_aged_rows(engine: AsyncEngine) -> 
     assert "inbox-fresh" in remaining
 
 
-# --- B4: atomic fan-in decrement, guarded in-transaction (H3) ----------------
+# --- atomic fan-in decrement, guarded in-transaction ----------------
 
 
 async def _seed_job_with_tasks(engine: AsyncEngine, n: int) -> tuple[str, list[str]]:
@@ -240,7 +240,7 @@ async def test_fan_in_concurrent_no_lost_update(engine: AsyncEngine) -> None:
         assert job.pending_count == 0
 
 
-# --- H15: set pending_count only on the first CAS out of PENDING --------------
+# --- set pending_count only on the first CAS out of PENDING --------------
 
 
 async def test_counter_once_sets_pending_count_on_first_call(engine: AsyncEngine) -> None:
@@ -312,7 +312,7 @@ async def test_counter_once_concurrent_only_one_wins(engine: AsyncEngine) -> Non
         assert refreshed.pending_count == 7  # seeded once
 
 
-# --- B6: status-count aggregate for /stats (read-only GROUP BY) ---------------
+# --- status-count aggregate for /stats (read-only GROUP BY) ---------------
 
 
 async def test_stats_counts_jobs_by_status(engine: AsyncEngine) -> None:
