@@ -244,15 +244,15 @@
       "rung": 4,
       "behavior": "Cache stampede in-flight lock (BOM backlog-H8): acquire_inflight(h)->bool true if caller won SET tts:inflight:{h} NX EX (it synthesizes); losers wait (bounded) for cache_get then use it -> at most one vendor call per identical-block burst. MUST NOT hold a TTS slot while waiting on the in-flight lock. OR a documented deliberate simplification in module + DOC2.",
       "verification": ["uv run pytest tests/integration -k redis (K concurrent acquire_inflight for one hash -> exactly one True; rest observe populated cache)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "IMPLEMENTED the in-flight lock (not the simplification). uv run pytest tests/integration -k redis -> 17 passed (2 new H8: 10 concurrent acquire_inflight for one hash -> sum(won)==1 exactly one synthesiser; 5-caller stampede -> exactly one 'synth' (vendor call), the other 4 wait_for_cache and all end with the same url) against real redis:7-alpine; Cache.acquire_inflight (SET tts:inflight:<hash> NX EX) / release_inflight / wait_for_cache (bounded poll), checked WITHOUT a TTS slot to avoid pool deadlock; full gate: ruff+fmt clean, mypy 44 files 0 errors, pytest tests/unit 82 passed; commit 6203aeb HEAD anchor (user handles git)"
     },
     {
       "id": "R4inbox",
       "rung": 3,
       "behavior": "Idempotency fast-path + inbox helpers (BOM 06-R4 / 03-B5, exactly-once effect): durable mark_event(session, event_id)->bool via dialect insert(ProcessedEvent).on_conflict_do_nothing() (True first / False duplicate) is the AUTHORITY; Redis seen_once(task_id)->bool SETNX fast-path is non-authoritative optimization (H3). NEVER inbox-skip parse (H2). processed_events retention (H10).",
       "verification": ["uv run pytest tests/integration -k 'models or redis' (mark_event twice -> True then False; seen_once twice -> True then False; retention deletes aged rows)"],
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": ""
     },
     {
