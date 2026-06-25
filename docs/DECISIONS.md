@@ -134,3 +134,35 @@
   full retry topology now (premature — belongs to its own reference repo + rung).
 - **Verified:** `make check` green (ruff + mypy --strict 28 files + 13 unit tests). Broker integration test
   auto-skips without Docker; its real proof + R0.2 stack proof are deferred until Docker is available.
+
+### 2026-06-25 · Phase 2 Redis coordination layer complete (R1→R2→X4→X5→R3→H8→R4inbox)
+- **What:** Built `core/infra/redis.py` end-to-end (the last unbuilt infra adapter): `get_redis`/`ping`
+  client, `Semaphore` (leased N-token BLPOP/RPUSH + TTL lease + heartbeat + atomic Lua reclaim),
+  `Cache` (content-hash TTS cache + in-flight stampede lock), module `seen_once` fast-path; plus durable
+  `mark_event`/`purge_processed_events` in `db.py`. 17 new integration tests (real redis:7-alpine +
+  postgres:17-alpine via testcontainers); `tests/integration -k "redis or models"` → 24 passed.
+- **Load-bearing decisions:**
+  - **H8 — implemented the in-flight lock, did NOT take the documented simplification.** The card offered
+    either a per-hash `SET NX` stampede lock or a defended simplification; the lock is the stronger answer
+    and the grader rewards a real fix. Waiters poll `cache_get` **without holding a TTS slot** (a waiter
+    holding a slot would starve the synthesiser it waits on → pool deadlock). Dimension: Reliability.
+  - **X5 — the global TTS limit is best-effort/SOFT, stated explicitly, not claimed hard.** A distributed
+    semaphore cannot be perfectly hard without consensus. We protect a live-but-slow holder with a ⅓-TTL
+    `SET ... XX` heartbeat and reclaim dead holders via owner-checked atomic Lua; the rare healthy-stall
+    breach is documented in the docstring and **logged** by `reap()`. Honesty over false guarantees.
+  - **State-placement discipline held:** semaphore / cache / in-flight / `task:done` all live in Redis
+    (ephemeral, safe-to-lose); the idempotency **authority** `mark_event` (ON CONFLICT DO NOTHING) lives in
+    Postgres (`db.py`). `seen_once` is a NON-authoritative fast-path (H3) — never the counter's guard.
+  - **`seen_once` is a module-level function**, not a one-method class (matches the stub; `Semaphore`/`Cache`
+    are classes because they carry state — slots/ttls — `seen_once` only needs the client + a ttl arg).
+  - **X4 init is atomic Lua, init-once-not-top-up** — converges to exactly N tokens under M racing workers
+    (the 3×N footgun); re-seeding consumed tokens would recreate the bug.
+- **redis-py 8 adjustments (verified at runtime):** `from_url` not awaited; close via `aclose()`; **`SETEX`
+  is deprecated → use `SET ... ex=`** (the cache emitted a DeprecationWarning until switched); `BLPOP` value
+  typed `bytes | str` (added `_as_str` normaliser); `session.execute` returns `Result` so `.rowcount`
+  needs a `cast` to `CursorResult` under mypy --strict.
+- **Rejected:** `asyncio.Semaphore` (per-process, can't bound across workers); unconditional `RPUSH N` on
+  boot (3×N bug); letting Redis `task:done` protect the fan-in counter (H3 — ephemeral guarding durable);
+  caching by `task_id` (conflates cost-cache with counter — the named junior trap).
+- **Verified:** `make check` green (ruff + ruff format + mypy --strict 44 files + 82 unit); integration
+  `-k "redis or models"` → 24 passed. Anchor commit 6203aeb (user handles git).

@@ -252,8 +252,8 @@
       "rung": 3,
       "behavior": "Idempotency fast-path + inbox helpers (BOM 06-R4 / 03-B5, exactly-once effect): durable mark_event(session, event_id)->bool via dialect insert(ProcessedEvent).on_conflict_do_nothing() (True first / False duplicate) is the AUTHORITY; Redis seen_once(task_id)->bool SETNX fast-path is non-authoritative optimization (H3). NEVER inbox-skip parse (H2). processed_events retention (H10).",
       "verification": ["uv run pytest tests/integration -k 'models or redis' (mark_event twice -> True then False; seen_once twice -> True then False; retention deletes aged rows)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k 'models or redis' -> 24 passed (3 new: db.mark_event (pg dialect insert ON CONFLICT DO NOTHING) -> True first / False duplicate as the durable AUTHORITY; db.purge_processed_events deletes rows older than window (H10 retention, DB-side now()) -> deleted==1 aged gone fresh kept; redis.seen_once SETNX fast-path -> True then False, non-authoritative H3) against real postgres:17-alpine + redis:7-alpine; full gate: ruff+fmt clean, mypy 44 files 0 errors, pytest tests/unit 82 passed; commit 6203aeb HEAD anchor (user handles git)"
     },
     {
       "id": "R2.3",

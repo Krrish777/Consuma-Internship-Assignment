@@ -4,15 +4,17 @@
 > Structured feature status lives in `feature_list.json` (see CLAUDE.md). Decisions: `docs/DECISIONS.md` + `docs/SPEC.md §4, §6`.
 
 ## Current State
-- Phase: **Phase 1 — Domain pure logic** (FEATURES.md / docs/features/01-domain.md). Phase 0 complete.
-- Active card: **none** — D3, D4, H-FSM, R2.0 all `passing`; WIP=0.
-- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (43 files) + 82 unit tests.
-- Integration tests: conftest.py Ryuk fix in place (`TESTCONTAINERS_RYUK_DISABLED=true`); not re-run this session (pure-domain cards only, no Docker needed).
+- Phase: **Phase 2 — Redis coordination COMPLETE** (docs/features/02-redis.md fully exhausted). Phases 0–1 complete.
+- Active card: **none** — all 7 Redis BOM cards (R1, R2, X4, X5, R3, H8, R4inbox) `passing`; WIP=0.
+- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (44 files) + 82 unit tests.
+- Integration tests: **RE-RUN this session with Docker up** — `pytest tests/integration -k "redis or models"`
+  → 24 passed (real redis:7-alpine + postgres:17-alpine; Ryuk disabled via conftest.py). The 17 new Redis-layer
+  tests are L3 and gate the Phase-2 cards' `passing` state.
 - **R2.0 divergence RESOLVED** (docs/DECISIONS.md 2026-06-25 R2.0): SPEC §1 wins — poison is a
-  *consistently-failing* manuscript → DLQ after 3 retries via a SINGLE retryable `VendorError` (the
-  card's non-retryable `PoisonError`/`_sim.py` wording contradicted SPEC §1 + R3.3 and was re-scoped).
-  vendor.py stays in `core/domain` and now composes D3 `split_blocks` + D4 `content_hash` (duplicate
-  per-line splitter + inline sha256 removed).
+  *consistently-failing* manuscript → DLQ after 3 retries via a SINGLE retryable `VendorError`.
+- **Phase 2 design notes** (docs/DECISIONS.md 2026-06-25 Phase 2): H8 stampede lock IMPLEMENTED (not the
+  simplification); the global TTS limit is best-effort/SOFT (heartbeat + logged reclaim, honest framing);
+  `mark_event` (Postgres) is the idempotency authority, Redis `seen_once` only a fast-path (H3).
 
 ## Completed (all earning `passing` in feature_list.json)
 
@@ -52,6 +54,15 @@
 - [x] H-FSM — `core/domain/state.py`: CAS contract doc (rowcount-0 = normal) + `expected_for()` predecessor helper (anchor 0aff00f)
 - [x] R2.0 — `core/domain/vendor.py` reconciled per SPEC §1: single retryable `VendorError` (poison = DLQ-after-3, not fail-fast); composes D3/D4; 10 tests (anchor 0aff00f)
 
+### Phase 2 — Redis coordination (all passing; L3 testcontainers, Docker required)
+- [x] R1 — `core/infra/redis.py` `get_redis`/`ping`: shared `redis.asyncio` client, bytes mode; 2 tests (anchor 6203aeb)
+- [x] R2 — `Semaphore` leased N-token BLPOP/RPUSH + TTL lease + async-with `slot()`; 4 tests (anchor 6203aeb)
+- [x] X4 — `Semaphore.ensure_slots` atomic Lua exactly-once seed (3×N footgun); 2 tests (anchor 6203aeb)
+- [x] X5 — lease reaper: ⅓-TTL `SET XX` heartbeat + owner-checked Lua `reap()`; soft-limit logged; 3 tests (anchor 6203aeb)
+- [x] R3 — `Cache` content-hash cache (`SET..EX`, keyed on D4); 4 tests (anchor 6203aeb)
+- [x] H8 — `Cache` in-flight stampede lock (`acquire_inflight`/`wait_for_cache`); 2 tests (anchor 6203aeb)
+- [x] R4inbox — durable `db.mark_event` (ON CONFLICT, authority) + `purge_processed_events` (H10) + Redis `seen_once` fast-path; 3 tests (anchor 6203aeb)
+
 ### Tests (43 unit + integration)
 - `tests/unit/` — 37 tests (architecture, error_handlers, events, health, logging, schemas, smoke, state_machine)
 - `tests/integration/test_ingestion.py` — 7 tests (lifespan, POST /jobs ×4, GET /status ×2)
@@ -60,30 +71,37 @@
 - `tests/integration/test_storage.py` — MinIO: idempotent bucket, text/bytes roundtrip, list_prefix, key_exists
 
 ## In Progress
-- **none** — WIP=0. Phase 1 domain cards complete. Next pick is the R2.0 decision (below) or Phase 2 Redis.
+- **none** — WIP=0. Phase 2 Redis cards complete (all 7 passing). Next phase is the worker pipeline.
 
 ## What's Genuinely Unbuilt (FEATURES.md scope)
-Phase 1 domain logic is now built (D3/D4/H-FSM; R2.0 partial — see Known Issues). Remaining:
-- Phase 2 Redis coordination: semaphore (R4.1), content cache (R4.2), idempotency inbox (R3.2)
-- Phase 3 DB query layer: fan-in atomic UPDATE (B4), sweeper counter (H15), stats queries (B6)
-- Phase 4 Worker pipeline: parse/TTS/stitch handlers (X1–X7, W1–W7) — broker topology exists but handlers are stubs
+Phases 0–2 built (foundation, domain logic, Redis coordination). The infra adapters are now ALL complete
+(db, broker, storage, redis). Remaining is the pipeline that composes them:
+- Phase 3 DB query layer: fan-in atomic UPDATE…RETURNING (B4), sweeper counter (H15), stats queries (B6)
+- Phase 4 Worker pipeline: parse/TTS/stitch handlers (X1–X7, W1–W7) — broker topology + all adapters exist,
+  but `worker/handlers/{parse,tts,stitch}.py` are still STUBS. This is where redis.Semaphore/Cache/seen_once,
+  db.mark_event, and core.domain.vendor finally get wired into the choreography.
 - Phase 5 Gateway completion: /stats (G7/B6), PENDING-sweeper (G8/R3.4)
 - Phase 6 L4 e2e/behavior probes: crash-recovery, duplicate-delivery, poison-pill, semaphore, cache tests
 - Phase 7 Infra verification: I1–I4, H-DANGLE, H-PREFETCH
 - Phase 8 Architecture-defense docs: DOC1, DOC2
 
 ## Next Steps
-1. **Phase 2 — Redis coordination** (docs/features/02-redis.md): semaphore (R4.1), content cache (R4.2),
-   idempotency inbox (R3.2). First card needs `core/infra/redis.py` (does not exist yet). These are L3
-   (testcontainers) cards — require a Docker daemon, unlike the pure-L2 Phase-1 cards just finished.
-2. **When R3.3 (DLQ e2e) is built**, honor the R2.0 reconciliation: poison routes through the retry
-   ladder and dead-letters after 3 attempts (single `VendorError`), per SPEC §1 / DECISIONS 2026-06-25.
+1. **Phase 3 / Phase 4 — DB query layer + Worker pipeline** (docs/features/03-*, 04-*): wire the now-complete
+   adapters into the parse→TTS→stitch choreography. The fan-in join (B4) MUST be atomic `UPDATE…RETURNING`
+   (never a Python counter); TTS handler MUST check `Cache.cache_get` BEFORE `Semaphore.acquire` (a hit burns
+   no token); consumers go through `mark_event` (authority) + `seen_once` (fast-path); ack LAST.
+2. **When R3.3 (DLQ e2e) is built**, honor the R2.0 reconciliation: poison routes through the retry ladder and
+   dead-letters after 3 attempts (single `VendorError`), per SPEC §1 / DECISIONS 2026-06-25.
+3. **When the TTS handler / X3 worker bootstrap is built**, call `Semaphore.ensure_slots()` once on boot and
+   run `Semaphore.reap()` periodically (the reaper isn't self-scheduling — X5 provides the primitive only).
 
 ## Known Issues / Gaps
 - **Arch review 2026-06-24:** 13 hardening holes; full traces in `tmp/ARCH-REVIEW-2026-06-24.md` and `BACKLOG.md`. The FEATURES.md card spine folds every fix into its owning card — do NOT build without those constraints.
 - Worker pipeline body: worker/main.py is an idle skeleton; handlers/{parse,tts,stitch}.py are STUBS
   (docstring-only, no logic wired). The parse handler will wrap `core.domain.vendor.simulate_parse`
   with `asyncio.sleep` for latency (no separate `_sim.py` — fault logic stays pure in core/domain).
-- `core/infra/redis.py`: does not exist yet (Phase 2 scope).
+- `core/infra/redis.py`: **now complete** (R1/R2/X4/X5/R3/H8 + `seen_once`). `db.py` gained `mark_event` +
+  `purge_processed_events` (R4inbox). The reaper (`Semaphore.reap`) and retention (`purge_processed_events`)
+  are primitives — a scheduler must call them (worker bootstrap / sweeper, Phase 4/5).
 - `domain/text.py`, `domain/hash.py`: now exist (D3/D4 done).
 - `domain/models.py`: removed (F0.3).
