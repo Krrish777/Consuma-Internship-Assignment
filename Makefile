@@ -5,7 +5,8 @@
 .DEFAULT_GOAL := help
 UV := uv
 
-.PHONY: help setup dev down logs lint fmt typecheck test test-unit test-int e2e check check-all
+.PHONY: help setup dev down logs lint fmt typecheck test test-unit test-int e2e check check-all \
+        demo demo-crash demo-poison demo-duplicate
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -52,3 +53,12 @@ check: lint typecheck test-unit ## DoD gates runnable WITHOUT Docker
 
 check-all: check test-int e2e ## Full DoD: adds integration + E2E (needs Docker)
 	@echo "OK: full Definition of Done passed."
+
+demo: ## Narrated resilience demo — all 3 probes, with pauses (for recording)
+	@bash demo.sh
+demo-crash: ## Demo: crash recovery only
+	@bash demo.sh crash
+demo-poison: ## Demo: poison-pill -> DLQ only
+	@bash demo.sh poison
+demo-duplicate: ## Demo: duplicate delivery / idempotency only
+	@bash demo.sh duplicate
