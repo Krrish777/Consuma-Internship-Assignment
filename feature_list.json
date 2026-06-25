@@ -276,8 +276,8 @@
       "rung": 5,
       "behavior": "Status-count aggregate for /stats (BOM 03-B6, powers G7/R5.1): job_counts_by_status(session)->dict[str,int] via select(Job.status, func.count()).group_by(Job.status) -> .all(). Read-only aggregate (no locks, no writes); SQL GROUP BY, never load all rows and count in Python.",
       "verification": ["uv run pytest tests/integration -k 'models or stats' (seed jobs in mixed states -> returned dict matches expected per-status counts)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k 'models or stats' -> 13 passed (1 new B6 stats: baseline-delta against the shared container -> seeding {STITCHING:2, FAILED:3, COMPLETED:1} moves each status count by exactly that delta; keys are status value strings, values ints) against real postgres:17-alpine; job_counts_by_status in core/infra/queries.py uses select(Job.status, func.count()).group_by(Job.status) (SQL GROUP BY, read-only, no Python row-counting; zero-count statuses omitted -> zero-fill deferred to G7); full gate: ruff+fmt clean, mypy 45 files 0 errors, pytest tests/unit 82 passed; commit b891a95 HEAD anchor (user handles git)"
     },
     {
       "id": "R2.3",

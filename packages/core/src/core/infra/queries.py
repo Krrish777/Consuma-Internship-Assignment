@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, update
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domain.state import JobStatus
@@ -99,3 +99,18 @@ async def begin_parse(session: AsyncSession, job_id: str, n_blocks: int) -> bool
     result = cast("CursorResult[Any]", await session.execute(cas))
     await session.commit()
     return result.rowcount == 1
+
+
+async def job_counts_by_status(session: AsyncSession) -> dict[str, int]:
+    """Per-status job counts for ``GET /stats`` (B6, powers G7/R5.1).
+
+    A read-only aggregate — no locks, no writes. The count is done in the database
+    with ``GROUP BY`` (never by loading every row into Python and counting), so it
+    stays cheap as the table grows. Statuses with zero jobs are simply absent from
+    the result (that is how ``GROUP BY`` behaves); zero-filling all six FSM states
+    into a stable JSON shape is a presentation concern that belongs to the /stats
+    endpoint (G7), not this query.
+    """
+    stmt = select(Job.status, func.count()).group_by(Job.status)
+    rows = (await session.execute(stmt)).all()
+    return {status.value: count for status, count in rows}
