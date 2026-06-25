@@ -418,8 +418,8 @@
       "rung": 3,
       "behavior": "Idempotent consumers: processed_events inbox (INSERT ON CONFLICT DO NOTHING) + task:done SETNX. Duplicate delivery has exactly-once effect; no double pending_count decrement.",
       "verification": ["make e2e -k duplicate_delivery (same JobCreated x2 -> single effect, counter correct)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest -m e2e -k duplicate -> 2 passed in 25s against the LIVE stack, asserting DURABLE DB truth (not just /status). test_duplicate_jobcreated_has_exactly_once_effect: POST a 4-block job, then publish_raw the SAME JobCreated twice to q.parse (identical event_id = true redelivery); job COMPLETED with EXACTLY 4 Task rows all DONE + pending_count 0 (parse ON CONFLICT DO NOTHING + begin_parse CAS = no extra rows, counter intact). test_duplicate_ttsrequested_does_not_double_decrement: after COMPLETED, re-deliver a TtsRequested for a REAL already-DONE task (id read from DB, format-independent) twice; job stays COMPLETED, pending_count stays 0 (B4 conditional UPDATE...WHERE status<>'DONE' no-ops, never negative), still 3 rows. New conftest fixtures: publish_raw (own broker conn to localhost:5672 + declare_full) and db_engine (localhost:5432). make check green (ruff+fmt, mypy, 106 unit). commit 700e587 base (uncommitted; user handles git)."
     },
     {
       "id": "R3.3",
