@@ -20,6 +20,7 @@ Key decisions:
 
 from __future__ import annotations
 
+import httpx
 from aio_pika.abc import AbstractIncomingMessage
 from sqlalchemy import select
 
@@ -32,8 +33,42 @@ from core.infra.logging import bind_job_id, get_logger
 from core.infra.queries import advance_status, finalize_job
 from worker.bootstrap import WorkerContext
 from worker.handlers._base import ack_last
+from worker.ssrf import is_allowed
 
 log = get_logger("worker.stitch")
+
+
+async def _notify(ctx: WorkerContext, job_id: str) -> None:
+    """W5b — best-effort webhook. A failure here MUST NOT fail the job (MUST #8).
+
+    The job is already COMPLETED when this runs, and runs OUTSIDE the handler's
+    raise-path so it never rides the retry ladder. Empty allowlist = log-only mode;
+    otherwise the URL must pass the H-SSRF guard before any request is made.
+    """
+    async with get_session(ctx.engine) as session:
+        job = await session.get(Job, job_id)
+    if job is None or not job.callback_url:
+        log.info("job %s: no callback_url — nothing to notify", job_id)
+        return
+
+    callback = job.callback_url
+    allowlist = ctx.settings.webhook_allowlist
+    if not allowlist:
+        log.info("job %s: webhook log-only mode (no allowlist) → %s", job_id, job.final_key)
+        return
+    if not is_allowed(callback, allowlist):
+        log.warning("job %s: callback blocked by SSRF guard: %s", job_id, callback)
+        return
+
+    payload = {"job_id": job_id, "status": "COMPLETED", "final_key": job.final_key}
+    try:
+        async with httpx.AsyncClient(
+            timeout=ctx.settings.WEBHOOK_TIMEOUT_S, follow_redirects=False
+        ) as client:
+            await client.post(callback, json=payload)
+        log.info("job %s: webhook delivered to %s", job_id, callback)
+    except Exception:
+        log.warning("job %s: webhook failed (job stays COMPLETED)", job_id, exc_info=True)
 
 
 async def handle_stitch(ctx: WorkerContext, event: StitchReady) -> None:
@@ -73,6 +108,7 @@ async def handle_stitch(ctx: WorkerContext, event: StitchReady) -> None:
         finalized = await finalize_job(session, job_id, final_key)
     if finalized:
         log.info("job %s COMPLETED → %s (%d chunks)", job_id, final_key, len(chunk_keys))
+        await _notify(ctx, job_id)  # W5b — best-effort; never fails the job
 
 
 def make_stitch_handler(ctx: WorkerContext) -> Handler:
