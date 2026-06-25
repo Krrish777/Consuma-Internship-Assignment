@@ -1,4 +1,4 @@
-"""R1.2 — Job FSM unit tests (no Docker required).
+"""Job FSM unit tests (no Docker required).
 
 Covers: legal forward path, any→FAILED, terminal states, illegal
 backwards/skip transitions. Pure domain — fast, always runnable.
@@ -62,7 +62,7 @@ def test_skip_transitions_from_pending_illegal(skip_to: JobStatus) -> None:
     assert not can_transition(JobStatus.PENDING, skip_to)
 
 
-# --- H-FSM: expected_for (legal predecessors → the CAS WHERE guard) ---
+# --- expected_for (legal predecessors → the CAS WHERE guard) ---
 
 
 def test_expected_for_forward_path_predecessors() -> None:

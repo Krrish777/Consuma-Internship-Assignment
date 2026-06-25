@@ -1,4 +1,4 @@
-"""DOC2 verification (Phase 8) — ARCHITECTURE.md must defend every boundary, honestly.
+"""Verification (Phase 8) — ARCHITECTURE.md must defend every boundary, honestly.
 
 A coarse L1 guard for the reviewer-facing one-pager: it must exist, contain each required section
 (data-placement table, fan-in, the four seams, exactly-once *effect*), state the honest limits, and

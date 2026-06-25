@@ -1,11 +1,11 @@
-"""DOC1 verification (Phase 8) — the SPEC must match the built code, not teach the old bugs.
+"""Verification (Phase 8) — the SPEC must match the built code, not teach the old bugs.
 
 `docs/SPEC.md §4` predates the 2026-06-24 arch review and originally *taught* several of the
-S0/S1 bugs (x-death gating, Redis-SETNX fan-in idempotency, ...). Once the corrected mechanisms
-were built (B4, W3, W7, G8, W5, H-FSM, H-SSRF), this L1 test pins §4 to the corrected story so a
+bugs (x-death gating, Redis-SETNX fan-in idempotency, ...). Once the corrected mechanisms
+were built, this L1 test pins §4 to the corrected story so a
 future edit can't silently regress the source of truth back into teaching a fixed bug.
 
-Pure file read, no Docker — runs in `make check` (L1/L2) and the commit gate.
+Pure file read, no Docker — runs in `make check` and the commit gate.
 """
 
 from __future__ import annotations

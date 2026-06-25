@@ -1,4 +1,4 @@
-"""Architectural boundary tests (harness note 12) — enforce SPEC §3 layering MECHANICALLY.
+"""Architectural boundary tests — enforce layering MECHANICALLY.
 
 Agents copy whatever import patterns already exist, so the CLAUDE.md MUST/MUST-NOT rules are
 turned into checks that fail with what/why/fix guidance. Pure static analysis (ast), no Docker,

@@ -9,7 +9,7 @@ Defence in depth:
   * **Resolve and check EVERY address** — a public hostname can still resolve to a
     private IP (DNS rebinding), so we reject if ANY resolved A/AAAA record is
     private / loopback / link-local / reserved / multicast / unspecified.
-  * Pairs with ``follow_redirects=False`` + a hard timeout in the caller (W5b) so
+  * Pairs with ``follow_redirects=False`` + a hard timeout in the caller so
     every hop is controlled.
 
 Never trust the hostname string alone — the IP check is what actually protects us.

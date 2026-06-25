@@ -1,9 +1,9 @@
-"""T1 e2e helpers — pure docker/subprocess + manuscript builders (06-e2e.md).
+"""E2E helpers — pure docker/subprocess + manuscript builders.
 
 No fixtures here: plain callables the conftest fixtures and probe modules import.
 Container manipulation drives the REAL compose stack (``docker kill`` / ``restart``)
 for the crash-recovery and dependency-bounce probes — that fault injection is the
-whole point of L4, and it can't be simulated against a testcontainer.
+whole point, and it can't be simulated against a testcontainer.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def kill_container(name: str) -> None:
     """Ungraceful SIGKILL (``docker kill``) — simulates a crash, no clean drain.
 
     The killed worker's in-flight message is unacked, so the broker releases it
-    for redelivery (R3.1). Use ``stop_container`` for the graceful-SIGTERM path.
+    for redelivery. Use ``stop_container`` for the graceful-SIGTERM path.
     """
     _docker("kill", name)
 
@@ -50,7 +50,7 @@ def start_container(name: str) -> None:
 
 
 def restart_container(name: str) -> None:
-    """Bounce a dependency mid-job (E-EDGE dependency-down scenario)."""
+    """Bounce a dependency mid-job (dependency-down scenario)."""
     _docker("restart", name)
 
 

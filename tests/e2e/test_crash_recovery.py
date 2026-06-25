@@ -1,6 +1,6 @@
-"""R3.1 — crash-recovery probe (L4): a worker crash loses no message.
+"""Crash-recovery probe: a worker crash loses no message.
 
-SPEC §2's central reliability claim. The worker acks LAST — do work → COMMIT
+The central reliability claim. The worker acks LAST — do work → COMMIT
 Postgres → PUBLISH next → ACK — so a SIGKILL never acks work that wasn't durably
 recorded, and RabbitMQ holds/redelivers the message. The job must still converge
 to COMPLETED with its full asset.
@@ -12,8 +12,8 @@ give a flaky test that usually proves nothing. Killing first yields a
 *deterministic* crash-recovery assertion: a job that arrives while the worker is
 down sits durably in ``q.parse`` (not lost, not processed), and the recovered
 worker runs the full pipeline to completion. The complementary in-flight
-unacked-redelivery path is L3-proven by the idempotency handlers (B4 conditional
-claim, W4 H-EMIT, W5 stitch H5) — see DECISIONS Phase-6 R3.1.
+unacked-redelivery path is proven by the idempotency handlers (conditional
+claim, emit, stitch) — see DECISIONS.
 """
 
 from __future__ import annotations

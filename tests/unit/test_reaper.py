@@ -1,8 +1,8 @@
-"""H2 / H-REAP — worker semaphore reap loop (L2, pure; no Docker).
+"""Worker semaphore reap loop (pure; no Docker).
 
 ``Semaphore.reap()`` (owner-checked atomic Lua) returns a crashed holder's
-orphaned token to the pool exactly once; its reclaim semantics are L3-proven
-(X5, tests/integration/test_redis.py). H2 adds nothing to that logic — it only
+orphaned token to the pool exactly once; its reclaim semantics are proven
+(tests/integration/test_redis.py). The loop adds nothing to that logic — it only
 *schedules* it. So these tests pin the loop's contract: sleep-first, reap each
 pass, survive a failing pass, and cancel cleanly (the worker cancels it on the
 shutdown event). The live "killed mid-TTS holder's slot returns" path rides on

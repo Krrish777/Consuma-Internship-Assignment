@@ -1,7 +1,7 @@
 """Stitch handler (Stage D) — idempotent finalize.
 
 Consumes ``StitchReady``, concatenates the job's TTS chunks into a single
-``out/<job>.mp3``, and marks the job COMPLETED. The webhook notification (W5b)
+``out/<job>.mp3``, and marks the job COMPLETED. The webhook notification
 extends this module.
 
 Key decisions:
@@ -9,11 +9,11 @@ Key decisions:
     content-addressed (``tts/<hash>.wav``, deduped system-wide), so a prefix list
     can't identify or order *this* job's chunks. The Task table is the authority:
     ``WHERE job_id=… AND status='DONE' ORDER BY block_index`` (FAILED blocks are
-    skipped — the W7 partial-drama policy).
+    skipped — the partial-drama policy).
   * **Client-side concat, NOT ``compose_object``.** MinIO server-side compose
     requires every non-final part ≥ 5 MiB; simulated chunks are tiny. Download-join-
     put is correct for small chunks (each MinIO call is already thread-wrapped).
-  * **Idempotent (H5).** A redelivered StitchReady on an already-COMPLETED job
+  * **Idempotent.** A redelivered StitchReady on an already-COMPLETED job
     returns immediately — no double asset, no illegal COMPLETED→COMPLETED. Status
     advances via CAS; a lost CAS means "someone else finalised it", not an error.
 """
@@ -39,11 +39,11 @@ log = get_logger("worker.stitch")
 
 
 async def _notify(ctx: WorkerContext, job_id: str) -> None:
-    """W5b — best-effort webhook. A failure here MUST NOT fail the job (MUST #8).
+    """Best-effort webhook. A failure here MUST NOT fail the job.
 
     The job is already COMPLETED when this runs, and runs OUTSIDE the handler's
     raise-path so it never rides the retry ladder. Empty allowlist = log-only mode;
-    otherwise the URL must pass the H-SSRF guard before any request is made.
+    otherwise the URL must pass the SSRF guard before any request is made.
     """
     async with get_session(ctx.engine) as session:
         job = await session.get(Job, job_id)
@@ -108,7 +108,7 @@ async def handle_stitch(ctx: WorkerContext, event: StitchReady) -> None:
         finalized = await finalize_job(session, job_id, final_key)
     if finalized:
         log.info("job %s COMPLETED → %s (%d chunks)", job_id, final_key, len(chunk_keys))
-        await _notify(ctx, job_id)  # W5b — best-effort; never fails the job
+        await _notify(ctx, job_id)  # best-effort; never fails the job
 
 
 def make_stitch_handler(ctx: WorkerContext) -> Handler:
