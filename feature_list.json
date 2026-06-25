@@ -314,15 +314,15 @@
       "rung": 3,
       "behavior": "Consume loop with manual-ack + sized prefetch (BOM 08-W1, H-PREFETCH): register handlers via broker.consume with no_ack=False (manual ack LAST); size q.tts prefetch near the semaphore size (slots + small headroom), NOT the global PREFETCH=16 (13+ messages parked unacked on a blocked BLPOP = large crash blast radius + HOL pressure). Do NOT use the ref repo's auto-ack process() loop (H-REF1).",
       "verification": ["uv run pytest tests/unit -k prefetch (q.tts prefetch sized near TTS_CONCURRENCY, not 16)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k prefetch -> 2 passed (prefetch_for(q.tts) <= TTS_CONCURRENCY+1 and < global PREFETCH=16; q.parse/q.stitch == PREFETCH); prefetch_for in worker/main.py wired into register_consumers (one channel per queue so set_qos is per-queue). The live crash-redelivery blast-radius assertion is Phase-6 R3.1 e2e; here L1+L2. full gate: ruff+fmt clean, mypy 52 files 0 errors, pytest tests/unit 87 passed; commit f62825c HEAD anchor (user handles git)"
     },
     {
       "id": "X7",
       "rung": 3,
       "behavior": "Exception taxonomy (BOM 12-X7): worker/errors.py defines TransientError (retryable -> retry ladder) and PoisonError (non-retryable -> DLQ immediately). Unknown/unclassified exceptions are treated as transient up to MAX_RETRIES then DLQ'd (fail-safe: never silently ack-drop a message because of an unclassified bug).",
       "verification": ["uv run pytest tests/unit -k 'errors or taxonomy' (two classes; documented routing: poison->DLQ now, transient/unknown->ladder)"],
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": ""
     },
     {

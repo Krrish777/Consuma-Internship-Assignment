@@ -23,13 +23,27 @@ from __future__ import annotations
 import asyncio
 import signal
 
+from core.config import Settings
 from core.infra import broker
-from core.infra.broker import Handler
+from core.infra.broker import Handler, Q_TTS
 from core.infra.logging import get_logger
 from worker.bootstrap import WorkerContext, build_context, close_context
 from worker.dispatch import build_handlers
 
 log = get_logger("worker")
+
+
+def prefetch_for(queue_name: str, settings: Settings) -> int:
+    """Per-queue prefetch (W1 / H-PREFETCH).
+
+    q.tts is sized near the TTS semaphore size (slots + a tiny headroom): a worker
+    parking many more unacked TTS messages than it can ever service just blocks them
+    on ``BLPOP`` and enlarges the crash-redelivery blast radius. Other queues keep
+    the global ``PREFETCH`` default.
+    """
+    if queue_name == Q_TTS:
+        return settings.TTS_CONCURRENCY + 1
+    return settings.PREFETCH
 
 
 def _request_shutdown(shutdown: asyncio.Event) -> None:
@@ -55,13 +69,15 @@ def install_signal_handlers(loop: asyncio.AbstractEventLoop, shutdown: asyncio.E
 async def register_consumers(ctx: WorkerContext, handlers: dict[str, Handler]) -> None:
     """Register each handler on its queue, one dedicated channel per queue.
 
-    A per-queue channel lets prefetch be sized per queue (W1). Prefetch is uniform
-    here (X1); W1 sizes q.tts down toward the semaphore size (H-PREFETCH).
+    A per-queue channel lets prefetch be sized per queue (W1): ``prefetch_for``
+    sizes q.tts down toward the semaphore size (H-PREFETCH).
     """
     for queue_name, handler in handlers.items():
         channel = await ctx.connection.channel()
         queue = await channel.get_queue(queue_name)
-        await broker.consume(channel, queue, handler, prefetch=ctx.settings.PREFETCH)
+        await broker.consume(
+            channel, queue, handler, prefetch=prefetch_for(queue_name, ctx.settings)
+        )
 
 
 async def run() -> None:
