@@ -5,10 +5,14 @@
 
 ## Current State
 - Phase: **Phase 1 — Domain pure logic** (FEATURES.md / docs/features/01-domain.md). Phase 0 complete.
-- Active card: **none** — D3, D4, H-FSM all earned `passing`; WIP=0.
-- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (43 files) + 84 unit tests.
+- Active card: **none** — D3, D4, H-FSM, R2.0 all `passing`; WIP=0.
+- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (43 files) + 82 unit tests.
 - Integration tests: conftest.py Ryuk fix in place (`TESTCONTAINERS_RYUK_DISABLED=true`); not re-run this session (pure-domain cards only, no Docker needed).
-- **Open decision:** R2.0 divergence — see Known Issues. The fault-injection card (01-domain.md R2.0) specs `services/worker/handlers/_sim.py` with async `sim_parse`/`sim_tts` and a `TransientError`/`PoisonError` taxonomy; what exists is the synchronous `core/domain/vendor.py` with a single `VendorError`. R2.0 is marked `passing` against vendor.py. Needs a user call before Phase 4.
+- **R2.0 divergence RESOLVED** (docs/DECISIONS.md 2026-06-25 R2.0): SPEC §1 wins — poison is a
+  *consistently-failing* manuscript → DLQ after 3 retries via a SINGLE retryable `VendorError` (the
+  card's non-retryable `PoisonError`/`_sim.py` wording contradicted SPEC §1 + R3.3 and was re-scoped).
+  vendor.py stays in `core/domain` and now composes D3 `split_blocks` + D4 `content_hash` (duplicate
+  per-line splitter + inline sha256 removed).
 
 ## Completed (all earning `passing` in feature_list.json)
 
@@ -46,6 +50,7 @@
 - [x] D3 — `core/domain/text.py` `split_blocks()`: blank-line paragraph splitter; 0-block path → [] (anchor 0aff00f)
 - [x] D4 — `core/domain/hash.py` `content_hash()`: canonical sha256(text) hex; cache/idempotency key (anchor 0aff00f)
 - [x] H-FSM — `core/domain/state.py`: CAS contract doc (rowcount-0 = normal) + `expected_for()` predecessor helper (anchor 0aff00f)
+- [x] R2.0 — `core/domain/vendor.py` reconciled per SPEC §1: single retryable `VendorError` (poison = DLQ-after-3, not fail-fast); composes D3/D4; 10 tests (anchor 0aff00f)
 
 ### Tests (43 unit + integration)
 - `tests/unit/` — 37 tests (architecture, error_handlers, events, health, logging, schemas, smoke, state_machine)
@@ -68,23 +73,17 @@ Phase 1 domain logic is now built (D3/D4/H-FSM; R2.0 partial — see Known Issue
 - Phase 8 Architecture-defense docs: DOC1, DOC2
 
 ## Next Steps
-1. **Resolve R2.0 divergence** (user decision — see Known Issues). Either: (a) keep vendor.py as the
-   canonical sim and re-scope the 01-domain.md R2.0 card to match it; or (b) build the card as written
-   (`worker/handlers/_sim.py`, async `sim_parse`/`sim_tts`, `TransientError`/`PoisonError` split) and
-   demote vendor.py. The exception taxonomy choice drives retry-vs-DLQ routing in Phase 4, so settle it
-   before the parse/tts handlers (R2.3/R4.x). NB apparent spec tension: R2.0 says poison is non-retryable
-   (→ straight to DLQ) while R3.3 says poison dead-letters *after 3 retries* — reconcile when deciding.
-2. **Phase 2 — Redis coordination** (docs/features/02-redis.md): semaphore (R4.1), content cache (R4.2),
-   idempotency inbox (R3.2). First card needs `core/infra/redis.py` (does not exist yet).
+1. **Phase 2 — Redis coordination** (docs/features/02-redis.md): semaphore (R4.1), content cache (R4.2),
+   idempotency inbox (R3.2). First card needs `core/infra/redis.py` (does not exist yet). These are L3
+   (testcontainers) cards — require a Docker daemon, unlike the pure-L2 Phase-1 cards just finished.
+2. **When R3.3 (DLQ e2e) is built**, honor the R2.0 reconciliation: poison routes through the retry
+   ladder and dead-letters after 3 attempts (single `VendorError`), per SPEC §1 / DECISIONS 2026-06-25.
 
 ## Known Issues / Gaps
 - **Arch review 2026-06-24:** 13 hardening holes; full traces in `tmp/ARCH-REVIEW-2026-06-24.md` and `BACKLOG.md`. The FEATURES.md card spine folds every fix into its owning card — do NOT build without those constraints.
 - Worker pipeline body: worker/main.py is an idle skeleton; handlers/{parse,tts,stitch}.py are STUBS
-  (docstring-only, no logic wired). No `_sim.py` exists.
-- **R2.0 divergence (open):** 01-domain.md R2.0 specs `worker/handlers/_sim.py` (async `sim_parse`/`sim_tts`,
-  `TransientError`/`PoisonError` taxonomy). Actual impl is `core/domain/vendor.py` (sync, single `VendorError`,
-  12 tests). vendor.py is purer (domain-layer, no asyncio) but lacks the two-exception split that drives
-  retry-vs-DLQ routing. R2.0 is marked `passing` against vendor.py. See Next Steps #1.
+  (docstring-only, no logic wired). The parse handler will wrap `core.domain.vendor.simulate_parse`
+  with `asyncio.sleep` for latency (no separate `_sim.py` — fault logic stays pure in core/domain).
 - `core/infra/redis.py`: does not exist yet (Phase 2 scope).
 - `domain/text.py`, `domain/hash.py`: now exist (D3/D4 done).
 - `domain/models.py`: removed (F0.3).
