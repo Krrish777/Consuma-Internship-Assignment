@@ -268,7 +268,7 @@
       "rung": 2,
       "behavior": "Set pending_count only on the first CAS out of PENDING (BOM backlog-H15, parse re-runnability corollary of H2): begin_parse(session, job_id, n_blocks)->bool does a CAS UPDATE jobs SET status=PARSING, pending_count=N WHERE job_id AND status=PENDING. rowcount==1 => first run (counter set, returns True); rowcount==0 => parse redelivery (job already advanced, counter untouched, returns False). A parse re-run MUST NOT reset pending_count (that would resurrect already-decremented tasks and the job would never finish). NOTE: FSM legal successor of PENDING is PARSING (state.py LEGAL), not GENERATING as the card title loosely states.",
       "verification": ["uv run pytest tests/integration -k 'models or counter_once' (begin_parse twice -> True then False; counter set exactly once; a re-run leaves a decremented counter intact)"],
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": ""
     },
     {

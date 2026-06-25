@@ -32,7 +32,8 @@ from core.infra.db import (
     mark_event,
     purge_processed_events,
 )
-from core.infra.queries import complete_task_and_decrement
+from core.domain.state import JobStatus
+from core.infra.queries import begin_parse, complete_task_and_decrement
 
 pytestmark = pytest.mark.integration
 
@@ -237,3 +238,75 @@ async def test_fan_in_concurrent_no_lost_update(engine: AsyncEngine) -> None:
         job = await session.get(Job, job_id)
         assert job is not None
         assert job.pending_count == 0
+
+
+# --- H15: set pending_count only on the first CAS out of PENDING --------------
+
+
+async def test_counter_once_sets_pending_count_on_first_call(engine: AsyncEngine) -> None:
+    """First begin_parse: CAS PENDING->PARSING and seed pending_count=N; returns True."""
+    async with get_session(engine) as session:
+        job = Job(manuscript_key="raw/h15-first.txt")  # PENDING, pending_count=0
+        session.add(job)
+        await session.commit()
+        job_id = job.job_id
+
+    async with get_session(engine) as session:
+        assert await begin_parse(session, job_id, 5) is True
+
+    async with get_session(engine) as session:
+        refreshed = await session.get(Job, job_id)
+        assert refreshed is not None
+        assert refreshed.pending_count == 5
+        assert refreshed.status == JobStatus.PARSING
+
+
+async def test_counter_once_rerun_does_not_reset(engine: AsyncEngine) -> None:
+    """A parse redelivery must NOT reset the (possibly-decremented) counter."""
+    async with get_session(engine) as session:
+        job = Job(manuscript_key="raw/h15-rerun.txt")
+        session.add(job)
+        await session.commit()
+        job_id = job.job_id
+
+    async with get_session(engine) as session:
+        assert await begin_parse(session, job_id, 5) is True  # first run seeds 5
+
+    # Simulate one TTS task completing: 5 -> 4.
+    async with get_session(engine) as session:
+        await session.execute(
+            text("UPDATE jobs SET pending_count = pending_count - 1 WHERE job_id = :id"),
+            {"id": job_id},
+        )
+        await session.commit()
+
+    # Parse redelivered (job already PARSING): must be a no-op on the counter.
+    async with get_session(engine) as session:
+        assert await begin_parse(session, job_id, 5) is False
+
+    async with get_session(engine) as session:
+        refreshed = await session.get(Job, job_id)
+        assert refreshed is not None
+        assert refreshed.pending_count == 4  # left intact, NOT reset to 5
+        assert refreshed.status == JobStatus.PARSING
+
+
+async def test_counter_once_concurrent_only_one_wins(engine: AsyncEngine) -> None:
+    """Concurrent first-CAS: exactly one begin_parse wins; counter seeded once."""
+    async with get_session(engine) as session:
+        job = Job(manuscript_key="raw/h15-concurrent.txt")
+        session.add(job)
+        await session.commit()
+        job_id = job.job_id
+
+    async def attempt() -> bool:
+        async with get_session(engine) as session:
+            return await begin_parse(session, job_id, 7)
+
+    results = await asyncio.gather(*(attempt() for _ in range(5)))
+
+    assert results.count(True) == 1  # exactly one first-runner
+    async with get_session(engine) as session:
+        job = await session.get(Job, job_id)
+        assert job is not None
+        assert job.pending_count == 7  # seeded once

@@ -15,6 +15,7 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.domain.state import JobStatus
 from core.infra.db import Job, Task
 
 
@@ -64,3 +65,37 @@ async def complete_task_and_decrement(
     remaining = (await session.execute(decrement)).scalar_one()
     await session.commit()
     return int(remaining)
+
+
+async def begin_parse(session: AsyncSession, job_id: str, n_blocks: int) -> bool:
+    """Initialise ``pending_count`` exactly once, on the first CAS out of PENDING (H15).
+
+    A parse message can be redelivered (at-least-once). If every delivery did an
+    unconditional ``UPDATE jobs SET pending_count = N`` it would *resurrect*
+    already-decremented tasks and the fan-in barrier would never reach 0 — the job
+    would hang forever. So the counter is seeded only on the **first**
+    compare-and-set transition out of PENDING:
+
+        UPDATE jobs SET status='PARSING', pending_count=:n
+         WHERE job_id=:id AND status='PENDING'
+
+    ``rowcount == 1`` → this delivery won the transition: the counter is now seeded;
+    return True so the caller proceeds with the (first-time) fan-out bookkeeping.
+    ``rowcount == 0`` → a redelivery; the job already advanced, the counter is left
+    untouched (this is the *normal* H-FSM concurrent outcome, not an error); return
+    False so the caller skips counter init and merely re-publishes the N
+    TtsRequested events (parse is a fan-out emitter that must stay re-runnable, H2).
+
+    NOTE on the target state: the FSM (``core/domain/state.py``) makes PARSING the
+    only legal successor of PENDING — a direct PENDING→GENERATING jump the card
+    title loosely mentions is illegal. The PARSING→GENERATING advance is a separate
+    transition owned by the Phase-4 parse handler after the fan-out.
+    """
+    cas = (
+        update(Job)
+        .where(Job.job_id == job_id, Job.status == JobStatus.PENDING)
+        .values(status=JobStatus.PARSING, pending_count=n_blocks)
+    )
+    result = cast("CursorResult[Any]", await session.execute(cas))
+    await session.commit()
+    return result.rowcount == 1
