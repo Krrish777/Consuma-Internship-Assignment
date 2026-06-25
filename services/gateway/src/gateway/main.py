@@ -39,7 +39,7 @@ from core.config import get_settings
 from core.domain.events import JobCreated
 from core.domain.state import JobStatus
 from core.infra import broker
-from core.infra.db import Job, get_engine, get_session
+from core.infra.db import Job, create_tables, get_engine, get_session
 from core.infra.logging import bind_job_id, configure_logging, get_logger
 from core.infra.queries import job_counts_by_status
 from core.infra.storage import ensure_bucket, put_text
@@ -60,6 +60,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     exchange = await broker.declare_full(channel)
 
     engine = get_engine(settings.DATABASE_URL)
+
+    # Ensure the schema exists on the deployment Postgres. `create_tables` is
+    # `metadata.create_all` (idempotent, checkfirst), so this is a safe no-op on
+    # every boot after the first. The gateway is the single schema owner: it must
+    # be up to accept jobs and it runs the sweeper, and the worker only queries
+    # Postgres once a job exists — so one creator avoids concurrent CREATE races.
+    # (No standalone Alembic migration ships in this simulation; see DECISIONS.)
+    async with engine.begin() as conn:
+        await create_tables(conn)
 
     minio_client = Minio(
         settings.MINIO_ENDPOINT,

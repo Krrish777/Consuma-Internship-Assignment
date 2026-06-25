@@ -1494,12 +1494,14 @@ source = { editable = "services/worker" }
 dependencies = [
     { name = "aio-pika" },
     { name = "core" },
+    { name = "httpx" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aio-pika", specifier = ">=9.6.2" },
     { name = "core", editable = "packages/core" },
+    { name = "httpx", specifier = ">=0.27" },
 ]
 
 [[package]]

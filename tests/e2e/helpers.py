@@ -23,9 +23,7 @@ POSTGRES = "consuma-postgres-1"
 
 def _docker(*args: str) -> str:
     """Run a docker CLI command, raising with captured output on failure."""
-    result = subprocess.run(
-        ["docker", *args], check=True, capture_output=True, text=True
-    )
+    result = subprocess.run(["docker", *args], check=True, capture_output=True, text=True)
     return result.stdout
 
 

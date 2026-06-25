@@ -77,7 +77,7 @@ def wait_for_status(
         while time.monotonic() < deadline:
             resp = await client.get(f"/status/{job_id}")
             if resp.status_code == 200:
-                status = resp.json()["status"]
+                status = str(resp.json()["status"])
                 if status == target or status in TERMINAL_STATES:
                     return status
             await asyncio.sleep(1.0)
