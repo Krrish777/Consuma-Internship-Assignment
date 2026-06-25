@@ -1,22 +1,86 @@
-"""STAGE D — Stitch + notify (spec §8, §9).
+"""STAGE D — Stitch handler (idempotent finalize) (spec §8, §9).
 
-Factory wired into the dispatch table by X2; the consume-loop body is implemented
-in W5 (client-side concat of the job's chunks → out/<job>.mp3 → CAS COMPLETED,
-idempotent under redelivery) and the best-effort webhook in W5b.
+Consumes ``StitchReady``, concatenates the job's TTS chunks into a single
+``out/<job>.mp3``, and marks the job COMPLETED. The webhook notification (W5b)
+extends this module.
+
+Key decisions:
+  * **Chunk order comes from the DB, not a MinIO prefix.** Objects are
+    content-addressed (``tts/<hash>.wav``, deduped system-wide), so a prefix list
+    can't identify or order *this* job's chunks. The Task table is the authority:
+    ``WHERE job_id=… AND status='DONE' ORDER BY block_index`` (FAILED blocks are
+    skipped — the W7 partial-drama policy).
+  * **Client-side concat, NOT ``compose_object``.** MinIO server-side compose
+    requires every non-final part ≥ 5 MiB; simulated chunks are tiny. Download-join-
+    put is correct for small chunks (each MinIO call is already thread-wrapped).
+  * **Idempotent (H5).** A redelivered StitchReady on an already-COMPLETED job
+    returns immediately — no double asset, no illegal COMPLETED→COMPLETED. Status
+    advances via CAS; a lost CAS means "someone else finalised it", not an error.
 """
 
 from __future__ import annotations
 
 from aio_pika.abc import AbstractIncomingMessage
+from sqlalchemy import select
 
-from core.infra.broker import Handler
+from core.domain.events import StitchReady
+from core.domain.state import JobStatus
+from core.infra import storage
+from core.infra.broker import Handler, Q_STITCH
+from core.infra.db import Job, Task, get_session
+from core.infra.logging import bind_job_id, get_logger
+from core.infra.queries import advance_status, finalize_job
 from worker.bootstrap import WorkerContext
+from worker.handlers._base import ack_last
+
+log = get_logger("worker.stitch")
+
+
+async def handle_stitch(ctx: WorkerContext, event: StitchReady) -> None:
+    """Concat the job's chunks → out/<job>.mp3 → COMPLETED. Idempotent under redelivery."""
+    job_id = event.job_id
+
+    async with get_session(ctx.engine) as session:
+        job = await session.get(Job, job_id)
+        if job is None:
+            raise RuntimeError(f"stitch: job {job_id!r} has no row")
+        if job.status == JobStatus.COMPLETED:
+            log.info("stitch: job %s already COMPLETED — skipping (H5)", job_id)
+            return
+        chunk_keys = [
+            t.audio_key
+            for t in (
+                await session.execute(
+                    select(Task)
+                    .where(Task.job_id == job_id, Task.status == "DONE")
+                    .order_by(Task.block_index)
+                )
+            ).scalars()
+            if t.audio_key is not None
+        ]
+
+    # CAS toward STITCHING (idempotent; rowcount-0 = a concurrent worker got there).
+    async with get_session(ctx.engine) as session:
+        await advance_status(session, job_id, JobStatus.STITCHING)
+
+    # Client-side concat of the chunks in block order (small chunks → not compose_object).
+    parts = [await storage.get_bytes(ctx.minio, key) for key in chunk_keys]
+    final_key = f"out/{job_id}.mp3"
+    await storage.put_bytes(ctx.minio, final_key, b"".join(parts), content_type="audio/mpeg")
+
+    # CAS STITCHING→COMPLETED + stamp final_key. Only the winner finalises.
+    async with get_session(ctx.engine) as session:
+        finalized = await finalize_job(session, job_id, final_key)
+    if finalized:
+        log.info("job %s COMPLETED → %s (%d chunks)", job_id, final_key, len(chunk_keys))
 
 
 def make_stitch_handler(ctx: WorkerContext) -> Handler:
-    """Build the stitch consumer bound to ``ctx`` (body lands in W5)."""
+    """Build the stitch consumer: validate the event (pointers only), then handle it."""
 
-    async def handler(message: AbstractIncomingMessage) -> None:
-        raise NotImplementedError("stitch handler body lands in W5")
+    async def do_work(message: AbstractIncomingMessage) -> None:
+        event = StitchReady.model_validate_json(message.body)
+        bind_job_id(event.job_id)
+        await handle_stitch(ctx, event)
 
-    return handler
+    return ack_last(ctx, Q_STITCH, do_work)

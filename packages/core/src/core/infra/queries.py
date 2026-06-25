@@ -158,6 +158,26 @@ async def advance_status(session: AsyncSession, job_id: str, to_status: JobStatu
     return result.rowcount == 1
 
 
+async def finalize_job(session: AsyncSession, job_id: str, final_key: str) -> bool:
+    """CAS STITCHING→COMPLETED and record ``final_key`` (W5, the H-FSM contract).
+
+    Combines the terminal transition with stamping the stitched-asset key in one
+    atomic statement, guarded by ``expected_for(COMPLETED)`` (= {STITCHING}). Returns
+    True for the worker that wins the transition (it then fires the best-effort
+    webhook), False on a lost CAS (a concurrent/redelivered finalize already
+    completed the job — normal, not an error; no second webhook).
+    """
+    expected = expected_for(JobStatus.COMPLETED)
+    stmt = (
+        update(Job)
+        .where(Job.job_id == job_id, Job.status.in_(expected))
+        .values(status=JobStatus.COMPLETED, final_key=final_key)
+    )
+    result = cast("CursorResult[Any]", await session.execute(stmt))
+    await session.commit()
+    return result.rowcount == 1
+
+
 async def job_counts_by_status(session: AsyncSession) -> dict[str, int]:
     """Per-status job counts for ``GET /stats`` (B6, powers G7/R5.1).
 

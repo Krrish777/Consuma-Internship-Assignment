@@ -354,31 +354,31 @@
       "rung": 3,
       "behavior": "DLQ -> fan-in resolver (BOM 08-W7, H4): a consumer on q.dlq resolves the fan-in barrier for a poisoned TTS task so the job never stalls forever in GENERATING. Policy (recommended, documented in DOC1): mark that task FAILED and still decrement the barrier (stitch later skips FAILED blocks) so the job can reach STITCHING; if the decrement reaches 0, emit StitchReady. Stays OFF the hot queue (consumes q.dlq) so healthy q.tts traffic is unaffected (no HOL). Never silently drop a DLQ message without touching the barrier.",
       "verification": ["uv run pytest tests/integration -k dlq_resolver (poisoned TTS task on q.dlq -> task FAILED + barrier decremented; reaching 0 emits StitchReady; healthy traffic untouched)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k dlq_resolver -> 3 passed (tts poison: 1 good done + poison DLQ'd -> task FAILED, pending_count 0, one StitchReady (partial drama); parse poison JobCreated body -> job CAS FAILED; duplicate DLQ delivery -> no-op, pending_count stays 0 not -1, only one StitchReady) against real pg+rmq+redis+minio. RECOMMENDED policy implemented (FAILED-block + barrier resolves; alternative hard-fail is a one-line swap). handle_dlq routes by body shape (task_id -> fail_task_and_decrement; else advance_status FAILED); make_dlq_handler manages own ack/nack (not ack_last, q.dlq has no retry ladder), wired into run() OFF the hot queue. fail_task_and_decrement added to queries.py (guards NOT IN DONE,FAILED). X2 dispatch unchanged (1 passed). Live poison_pill e2e is Phase-6 R3.3; here L3. full gate: ruff+fmt clean, mypy 60 files 0 errors; commit f62825c HEAD anchor (user handles git)"
     },
     {
       "id": "W5",
       "rung": 4,
       "behavior": "Stitch handler / idempotent finalize (BOM 08-W5): consume StitchReady, CAS job->STITCHING (skip if past), list the job's tts chunks in block order (skip FAILED-block keys per W7), CLIENT-SIDE concat (get_bytes each + join + put_bytes out/<job>.mp3 — NOT compose_object, which needs >=5MiB parts), CAS job->COMPLETED, ack last. Idempotent: a redelivered StitchReady when already COMPLETED -> ack and return (no double asset, no illegal COMPLETED->COMPLETED, H5). Status via CAS (rowcount-0 = someone else did it).",
       "verification": ["uv run pytest tests/integration -k stitch (happy path -> COMPLETED + out/<job>.mp3 exists; redelivered StitchReady -> still one asset, one COMPLETED)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k stitch -> 3 passed (test_stitch_happy_path: 3-block job -> COMPLETED, final_key=out/<job>.mp3, object == client-side concat of chunks in block order; test_stitch_redelivery_is_idempotent: 2nd StitchReady short-circuits on COMPLETED -> one asset, one COMPLETED; + the tts test matching 'stitch') against real pg+rmq+redis+minio. handle_stitch in worker/handlers/stitch.py: chunk order from DB (Task WHERE DONE ORDER BY block_index, FAILED skipped) not MinIO prefix (content-addressed); client-side concat (not compose_object, <5MiB parts); advance_status STITCHING then finalize_job CAS STITCHING->COMPLETED+final_key; H5 short-circuit if already COMPLETED. finalize_job added to queries.py. Live e2e is Phase-6 R4.3; here L3. full gate: ruff+fmt clean, mypy 61 files 0 errors; commit f62825c HEAD anchor (user handles git)"
     },
     {
       "id": "H-SSRF",
       "rung": 4,
       "behavior": "Callback URL guard (BOM backlog-H-SSRF): worker/ssrf.py is_allowed(url, allowlist) defends the client-supplied callback_url against SSRF: parse host; if allowlist non-empty the host must be in it; resolve ALL A/AAAA records (socket.getaddrinfo) and reject if ANY resolved IP is private/loopback/link-local/reserved/multicast or 0.0.0.0/::. Never trust the hostname string alone (DNS rebinding). Pairs with follow_redirects=False + a hard timeout (W5b).",
       "verification": ["uv run pytest tests/unit -k ssrf (169.254.169.254 blocked, localhost blocked, 10.x private blocked, allowlisted public host allowed, non-allowlisted public host blocked when allowlist set)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k ssrf -> 9 passed (metadata 169.254.169.254 blocked, localhost/127.0.0.1 blocked, 10.x private blocked, 0.0.0.0 unspecified blocked, allowlisted public host allowed, non-allowlisted public blocked when allowlist set, DNS-rebinding multi-record with one private blocked, unresolvable host blocked, host-less url blocked) with socket.getaddrinfo mocked (no network). is_allowed in worker/ssrf.py: allowlist check + resolve ALL records + reject private/loopback/link-local/reserved/multicast/unspecified. full gate: ruff+fmt clean, mypy 63 files 0 errors, pytest tests/unit 106 passed; commit f62825c HEAD anchor (user handles git)"
     },
     {
       "id": "W5b",
       "rung": 4,
       "behavior": "Webhook notify / failure != job failure (BOM 08-W5, MUST #8): after COMPLETED, if callback_url is set and passes the H-SSRF guard, POST a small JSON payload (job_id, status, final_key) with httpx (follow_redirects=False, hard timeout). Wrapped in try/except: a webhook failure is logged and swallowed — the job stays COMPLETED. Never retry the webhook on the pipeline retry ladder (would ride a completed job into the DLQ).",
       "verification": ["uv run pytest tests/integration -k webhook (unreachable/failing callback -> job still COMPLETED with asset, failure logged; not-allowlisted URL -> skipped/log-only)"],
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": ""
     },
     {
