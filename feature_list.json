@@ -280,6 +280,108 @@
       "evidence": "uv run pytest tests/integration -k 'models or stats' -> 13 passed (1 new B6 stats: baseline-delta against the shared container -> seeding {STITCHING:2, FAILED:3, COMPLETED:1} moves each status count by exactly that delta; keys are status value strings, values ints) against real postgres:17-alpine; job_counts_by_status in core/infra/queries.py uses select(Job.status, func.count()).group_by(Job.status) (SQL GROUP BY, read-only, no Python row-counting; zero-count statuses omitted -> zero-fill deferred to G7); full gate: ruff+fmt clean, mypy 45 files 0 errors, pytest tests/unit 82 passed; commit b891a95 HEAD anchor (user handles git)"
     },
     {
+      "id": "X3",
+      "rung": 3,
+      "behavior": "Worker bootstrap / DI wiring (BOM 12-X3): build_context() -> WorkerContext constructs and wires every adapter the handlers need (broker connection+channel+exchange via declare_full, db engine, shared redis client + Semaphore + Cache, MinIO client+ensure_bucket) from get_settings(); calls configure_logging() and Semaphore.ensure_slots() (X4 idempotent seed) exactly once on boot. close_context() tears everything down cleanly. Worker imports core only, never gateway (boundary).",
+      "verification": [
+        "uv run pytest tests/unit -k architecture (worker never imports gateway)",
+        "uv run pytest tests/integration -k worker_bootstrap (build_context wires all adapters against real containers; ensure_slots seeds exactly N)"
+      ],
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k worker_bootstrap -> 2 passed (build_context wires broker channel+exchange, db engine SELECT 1, redis ping, MinIO bucket; ensure_slots seeds exactly TTS_CONCURRENCY=3 on boot and stays init-once across a simulated restart -> llen==3) against real postgres:17-alpine + rabbitmq:4 + redis:7 + minio; WorkerContext dataclass + build_context(settings=None)/close_context in worker/bootstrap.py (imports core only, never gateway -> test_architecture green); full gate: ruff+fmt clean, mypy 46 files 0 errors, pytest tests/unit 82 passed; commit f62825c HEAD anchor (user handles git)"
+    },
+    {
+      "id": "X2",
+      "rung": 3,
+      "behavior": "Handler dispatch / DI table (BOM 12-X2): build_handlers(ctx) -> {Q_PARSE: parse_handler(ctx), Q_TTS: tts_handler(ctx), Q_STITCH: stitch_handler(ctx)} maps each queue to its context-injected handler so the consume loop is generic. Each handler parses its event via pydantic model_validate_json (pointers only, never bytes). Adapters injected via ctx, never hardcoded.",
+      "verification": ["uv run pytest tests/unit -k dispatch (table maps the three queues to callables)"],
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k dispatch -> 1 passed (build_handlers(ctx) returns {q.parse,q.tts,q.stitch} -> callables, ctx injected via MagicMock so no Docker needed); build_handlers in worker/dispatch.py binds make_{parse,tts,stitch}_handler(ctx) by closure; handler factories created in worker/handlers/{parse,tts,stitch}.py (bodies are loud NotImplementedError placeholders filled by W3/W4/W5, not silent ack-drops); full gate: ruff+fmt clean, mypy 49 files 0 errors, pytest tests/unit 83 passed; commit f62825c HEAD anchor (user handles git)"
+    },
+    {
+      "id": "X1",
+      "rung": 3,
+      "behavior": "Worker entrypoint & run loop (BOM 12-X1): replace the idle await asyncio.Future() in worker/main.py with a real run loop: build_context() (X3) -> register the three consumers (X2 dispatch) with sized prefetch (W1) -> await shutdown. Clean SIGTERM/SIGINT handling closes the broker connection and cancels the run task so unacked messages are released for redelivery (R3.1 crash semantics).",
+      "verification": [
+        "uv run pytest tests/unit -k run_loop (consumers registered from dispatch table; signal handler cancels the shutdown event)",
+        "make check (ruff + mypy green)"
+      ],
+      "status": "in_progress",
+      "evidence": ""
+    },
+    {
+      "id": "W1",
+      "rung": 3,
+      "behavior": "Consume loop with manual-ack + sized prefetch (BOM 08-W1, H-PREFETCH): register handlers via broker.consume with no_ack=False (manual ack LAST); size q.tts prefetch near the semaphore size (slots + small headroom), NOT the global PREFETCH=16 (13+ messages parked unacked on a blocked BLPOP = large crash blast radius + HOL pressure). Do NOT use the ref repo's auto-ack process() loop (H-REF1).",
+      "verification": ["uv run pytest tests/unit -k prefetch (q.tts prefetch sized near TTS_CONCURRENCY, not 16)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "X7",
+      "rung": 3,
+      "behavior": "Exception taxonomy (BOM 12-X7): worker/errors.py defines TransientError (retryable -> retry ladder) and PoisonError (non-retryable -> DLQ immediately). Unknown/unclassified exceptions are treated as transient up to MAX_RETRIES then DLQ'd (fail-safe: never silently ack-drop a message because of an unclassified bug).",
+      "verification": ["uv run pytest tests/unit -k 'errors or taxonomy' (two classes; documented routing: poison->DLQ now, transient/unknown->ladder)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "W2",
+      "rung": 3,
+      "behavior": "Ack-last handler skeleton (BOM 08-W2 ⭐): worker/handlers/_base.py ack_last wrapper enforces the system's most important ordering (SPEC §4): do work -> COMMIT Postgres -> PUBLISH next -> ACK message (ack dead last). On TransientError -> route_retry_or_dlq THEN ack the original (work carried by the copy); on PoisonError -> publish to q.dlq THEN ack; on unknown -> treat as transient. Uses async with message.process(ignore_processed=True) so the explicit ack/nack doesn't double-process.",
+      "verification": ["uv run pytest tests/unit -k 'ack_last or base_handler' (success->ack; transient->ladder-then-ack; poison->dlq-then-ack; ack is last on every path, with a fake message)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "W3",
+      "rung": 2,
+      "behavior": "Parse handler / fan-out emitter (BOM 08-W3 ⭐): consume JobCreated, load manuscript from MinIO, sim_parse (transient/poison), split_blocks (D3); if 0 blocks -> CAS job straight to STITCHING (+publish StitchReady) and return (fan-in of 0 must not hang); else in ONE tx INSERT N Task rows (ON CONFLICT DO NOTHING on job_id+block_index) and begin_parse CAS sets pending_count=N only on first run (H15); ALWAYS re-publish all N TtsRequested (redelivery that finds rows still emits events, H2); advance PARSING->GENERATING; ack last. Cap block count at MAX_BLOCKS (H14). NEVER inbox-skip parse.",
+      "verification": ["uv run pytest tests/integration -k 'parse_fanout or zero_block_terminates' (N blocks -> N tasks + pending_count=N + N TtsRequested; redelivered JobCreated -> still N tasks, counter unchanged, events re-published; 0-block -> STITCHING/terminal)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "W4",
+      "rung": 4,
+      "behavior": "TTS handler / cache->slot->generate->fan-in (BOM 08-W4 ⭐): for each TtsRequested compute content_hash(text); cache_get BEFORE acquiring a semaphore slot (a hit burns NO token, SPEC §4); on miss acquire leased Redis slot (R2/X5, never asyncio.Semaphore) -> tts_fake_audio -> put_bytes tts/<hash>.wav -> cache_set -> release; then complete_task_and_decrement (B4 atomic claim+decrement); if remaining==0 publish StitchReady. H-EMIT: on redelivery where the claim no-ops, re-read pending_count and re-emit StitchReady if 0 (covers crash-after-decrement-before-publish). Ack last.",
+      "verification": ["uv run pytest tests/integration -k 'tts_cache or tts_fan_in or tts_emit' (identical block -> one synth + no 2nd slot; N tasks -> exactly one StitchReady; redelivery after barrier crossed -> re-emits StitchReady)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "W7",
+      "rung": 3,
+      "behavior": "DLQ -> fan-in resolver (BOM 08-W7, H4): a consumer on q.dlq resolves the fan-in barrier for a poisoned TTS task so the job never stalls forever in GENERATING. Policy (recommended, documented in DOC1): mark that task FAILED and still decrement the barrier (stitch later skips FAILED blocks) so the job can reach STITCHING; if the decrement reaches 0, emit StitchReady. Stays OFF the hot queue (consumes q.dlq) so healthy q.tts traffic is unaffected (no HOL). Never silently drop a DLQ message without touching the barrier.",
+      "verification": ["uv run pytest tests/integration -k dlq_resolver (poisoned TTS task on q.dlq -> task FAILED + barrier decremented; reaching 0 emits StitchReady; healthy traffic untouched)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "W5",
+      "rung": 4,
+      "behavior": "Stitch handler / idempotent finalize (BOM 08-W5): consume StitchReady, CAS job->STITCHING (skip if past), list the job's tts chunks in block order (skip FAILED-block keys per W7), CLIENT-SIDE concat (get_bytes each + join + put_bytes out/<job>.mp3 — NOT compose_object, which needs >=5MiB parts), CAS job->COMPLETED, ack last. Idempotent: a redelivered StitchReady when already COMPLETED -> ack and return (no double asset, no illegal COMPLETED->COMPLETED, H5). Status via CAS (rowcount-0 = someone else did it).",
+      "verification": ["uv run pytest tests/integration -k stitch (happy path -> COMPLETED + out/<job>.mp3 exists; redelivered StitchReady -> still one asset, one COMPLETED)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "H-SSRF",
+      "rung": 4,
+      "behavior": "Callback URL guard (BOM backlog-H-SSRF): worker/ssrf.py is_allowed(url, allowlist) defends the client-supplied callback_url against SSRF: parse host; if allowlist non-empty the host must be in it; resolve ALL A/AAAA records (socket.getaddrinfo) and reject if ANY resolved IP is private/loopback/link-local/reserved/multicast or 0.0.0.0/::. Never trust the hostname string alone (DNS rebinding). Pairs with follow_redirects=False + a hard timeout (W5b).",
+      "verification": ["uv run pytest tests/unit -k ssrf (169.254.169.254 blocked, localhost blocked, 10.x private blocked, allowlisted public host allowed, non-allowlisted public host blocked when allowlist set)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "W5b",
+      "rung": 4,
+      "behavior": "Webhook notify / failure != job failure (BOM 08-W5, MUST #8): after COMPLETED, if callback_url is set and passes the H-SSRF guard, POST a small JSON payload (job_id, status, final_key) with httpx (follow_redirects=False, hard timeout). Wrapped in try/except: a webhook failure is logged and swallowed — the job stays COMPLETED. Never retry the webhook on the pipeline retry ladder (would ride a completed job into the DLQ).",
+      "verification": ["uv run pytest tests/integration -k webhook (unreachable/failing callback -> job still COMPLETED with asset, failure logged; not-allowlisted URL -> skipped/log-only)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
       "id": "R2.3",
       "rung": 2,
       "behavior": "Parse handler: split blocks, write N Task rows + pending_count=N in ONE transaction, fan-out TtsRequested xN, advance GENERATING. 0-block manuscript -> STITCHING directly (no hang).",
