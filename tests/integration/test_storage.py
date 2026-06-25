@@ -14,7 +14,7 @@ import pytest
 from testcontainers.minio import MinioContainer
 
 from core.infra import storage
-from core.infra.storage import _make_client
+from core.infra.storage import BUCKET, _make_client
 
 pytestmark = pytest.mark.integration
 
@@ -60,3 +60,23 @@ async def test_key_exists(minio_client) -> None:  # type: ignore[no-untyped-def]
     await storage.put_text(minio_client, "raw/exists-test.txt", "data")
     assert storage.key_exists(minio_client, "raw/exists-test.txt")
     assert not storage.key_exists(minio_client, "raw/does-not-exist.txt")
+
+
+async def test_tts_objects_never_expire_so_cache_hits_stay_live(minio_client) -> None:  # type: ignore[no-untyped-def]
+    """H-DANGLE: object lifetime >= cache TTL.
+
+    A tts:cache:<hash> HIT must always resolve to a live object. The deployment
+    policy is the simplest correct one — no bucket lifecycle is configured, so tts/
+    objects never expire and can never be pruned out from under a cache entry. This
+    test guards that invariant: it fails if anyone later installs an expiring
+    lifecycle rule on the bucket (which would re-open the dangling-key 404 window).
+    """
+    await storage.ensure_bucket(minio_client)
+    await storage.put_bytes(minio_client, "tts/dangle-check.wav", b"FAKE_AUDIO")
+
+    # No lifecycle config at all -> objects never expire (object lifetime is unbounded,
+    # trivially >= CACHE_TTL_S). minio-py returns None when no lifecycle is set.
+    assert minio_client.get_bucket_lifecycle(BUCKET) is None
+
+    # And the object we just wrote is live (not pruned).
+    assert storage.key_exists(minio_client, "tts/dangle-check.wav")

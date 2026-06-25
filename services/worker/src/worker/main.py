@@ -39,8 +39,14 @@ def prefetch_for(queue_name: str, settings: Settings) -> int:
 
     q.tts is sized near the TTS semaphore size (slots + a tiny headroom): a worker
     parking many more unacked TTS messages than it can ever service just blocks them
-    on ``BLPOP`` and enlarges the crash-redelivery blast radius. Other queues keep
-    the global ``PREFETCH`` default.
+    on ``BLPOP`` and enlarges the crash-redelivery blast radius.
+
+    parse/stitch keep the larger global ``PREFETCH`` deliberately: their handlers never
+    block on a scarce leased resource — parse does DB writes + publish, stitch does a
+    MinIO concat + DB commit, each running to completion as soon as it is scheduled. A
+    deeper prefetch there only keeps the pipeline fed; it does NOT park messages unacked
+    behind a blocking primitive, so it adds no crash blast radius or head-of-line stall.
+    Only q.tts gates on the global 3-slot semaphore, so only q.tts needs the small bound.
     """
     if queue_name == Q_TTS:
         return settings.TTS_CONCURRENCY + 1
