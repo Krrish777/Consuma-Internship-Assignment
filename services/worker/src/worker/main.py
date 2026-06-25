@@ -21,6 +21,7 @@ Run by compose as: python -m worker.main
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal
 
 from core.config import Settings
@@ -30,6 +31,7 @@ from core.infra.logging import get_logger
 from worker.bootstrap import WorkerContext, build_context, close_context
 from worker.dispatch import build_handlers
 from worker.handlers.dlq import make_dlq_handler
+from worker.maintenance import run_reseeder
 
 log = get_logger("worker")
 
@@ -97,11 +99,21 @@ async def run() -> None:
     # W7: the DLQ resolver runs OFF the hot queue so healthy traffic is unaffected.
     handlers[Q_DLQ] = make_dlq_handler(ctx)
     await register_consumers(ctx, handlers)
+
+    # H1: re-seed the TTS semaphore pool if Redis is ever wiped (no-op on a healthy
+    # pool). Without it, a `docker restart redis` would strand acquire() on an empty
+    # BLPOP forever. Cancelled cleanly on shutdown, below.
+    reseeder_task = asyncio.create_task(
+        run_reseeder(semaphore=ctx.semaphore, interval_s=ctx.settings.RESEED_INTERVAL_S)
+    )
     log.info("worker running; consuming q.parse / q.tts / q.stitch / q.dlq")
 
     try:
         await shutdown.wait()
     finally:
+        reseeder_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reseeder_task
         await close_context(ctx)
         log.info("worker stopped cleanly")
 
