@@ -1,4 +1,4 @@
-"""Redis adapter — ephemeral coordination (spec §5, §7).
+"""Redis adapter — ephemeral coordination.
 
 The last unbuilt infra adapter. Owns three "safe-to-lose / rebuildable" jobs
 (state-placement golden rule — durable truth stays in Postgres):
@@ -34,7 +34,7 @@ SLOTS_KEY = "tts:slots"
 CACHE_PREFIX = "tts:cache:"
 INFLIGHT_PREFIX = "tts:inflight:"
 TASK_DONE_PREFIX = "task:done:"
-DEFAULT_CACHE_TTL = 86_400  # 24h; MUST stay <= the MinIO object lifetime (H-DANGLE)
+DEFAULT_CACHE_TTL = 86_400  # 24h; MUST stay <= the MinIO object lifetime
 DEFAULT_INFLIGHT_TTL = 60  # in-flight lock auto-expires if a synthesiser crashes
 DEFAULT_SEEN_TTL = 86_400  # how long the fast-path remembers a processed task_id
 
@@ -44,7 +44,7 @@ def _as_str(value: bytes | str) -> str:
     return value.decode() if isinstance(value, bytes) else value
 
 
-# Atomic, exactly-once pool seeding (X4). Runs server-side with no interleaving, so
+# Atomic, exactly-once pool seeding. Runs server-side with no interleaving, so
 # any number of racing workers converge to exactly N tokens. KEYS[1]=slots list,
 # KEYS[2]=init marker, ARGV[1]=N. Init-once (guarded by the marker), never top-up.
 _ENSURE_SLOTS_LUA = """

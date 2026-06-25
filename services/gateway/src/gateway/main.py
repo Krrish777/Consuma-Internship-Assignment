@@ -1,20 +1,20 @@
-"""FastAPI app entrypoint — gateway (spec §5, rungs R0.1, R2.2a-d).
+"""FastAPI app entrypoint — gateway.
 
 Lifespan: opens broker connection + DB engine + MinIO bucket once on startup,
 stashes on app.state, closes cleanly on shutdown. All handlers share one
 connection (not per-request) to avoid flooding the broker.
 
-Ingestion (R2.2):
+Ingestion:
   POST /jobs: put_text raw/<job>.txt → insert Job(PENDING) + COMMIT →
               publish JobCreated to q.parse → 202 + {job_id}
 
-  The dual-write order is load-bearing (BACKLOG H1 — sweeper closes the gap):
+  The dual-write order is load-bearing (sweeper closes the gap):
     MinIO write is safe to repeat; DB commit is the durable record; publish is
     the trigger. If we crash between commit and publish, the PENDING-sweeper
-    (R3.4) re-publishes. If we crash before commit, the job row never exists
+    re-publishes. If we crash before commit, the job row never exists
     and nothing happens.
 
-Status (R2.2d):
+Status:
   GET /status/{job_id}: returns job status or 404.
 
 Run by compose as: uvicorn gateway.main:app --host 0.0.0.0 --port 8000
@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.minio = minio_client
     app.state.settings = settings
 
-    # G8/R3.4 — PENDING-sweeper closes the producer-side dual-write seam (H1).
+    # PENDING-sweeper closes the producer-side dual-write seam.
     sweeper_task = asyncio.create_task(
         run_sweeper(
             engine=engine,
@@ -119,16 +119,16 @@ app.add_middleware(
 async def guard_manuscript_size(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
-    """H13 — reject an oversized ingestion body BEFORE it is buffered (DoS guard).
+    """Reject an oversized ingestion body BEFORE it is buffered (DoS guard).
 
     The cap must be enforced above the route: by the time ``create_job`` runs,
     FastAPI has already read the whole body into the pydantic model, so checking
     the parsed manuscript there is too late to prevent the OOM. We inspect the
     declared ``Content-Length`` here instead and reject with a clean, machine-
-    readable 413 — no unbounded body is ever read into memory (H13 MUST).
+    readable 413 — no unbounded body is ever read into memory.
 
     This bounds the realistic vector (an honest client declaring a huge body). A
-    chunked upload with no ``Content-Length`` is the residual the card's
+    chunked upload with no ``Content-Length`` is the residual an
     "or stream to MinIO" alternative would cover; left as a documented gap.
     """
     if request.method == "POST" and request.url.path == "/jobs":
@@ -170,11 +170,11 @@ def health() -> dict[str, str]:
 async def create_job(body: CreateJobRequest, request: Request) -> JobAccepted:
     """Ingest a manuscript: store → record → publish.
 
-    Order matters (BACKLOG H1):
+    Order matters:
       1. put_text to MinIO (idempotent key = raw/<job_id>.txt)
       2. INSERT Job(PENDING) + COMMIT (durable record)
       3. THEN publish JobCreated (trigger)
-    Crash between 2 and 3 is recovered by the PENDING-sweeper (R3.4).
+    Crash between 2 and 3 is recovered by the PENDING-sweeper.
     """
     job_id = uuid.uuid4().hex
     bind_job_id(job_id)
@@ -204,9 +204,9 @@ async def create_job(body: CreateJobRequest, request: Request) -> JobAccepted:
 
 @app.get("/stats", response_model=StatsResponse)
 async def stats(request: Request) -> StatsResponse:
-    """R5.1 — runtime job counts by status. Read-only; no locks, no writes.
+    """Runtime job counts by status. Read-only; no locks, no writes.
 
-    Counts are computed by B6's SQL ``GROUP BY`` aggregate (never by scanning
+    Counts are computed by a SQL ``GROUP BY`` aggregate (never by scanning
     rows in Python), then zero-filled across every FSM state so the response
     shape is stable even when a status has no rows.
     """

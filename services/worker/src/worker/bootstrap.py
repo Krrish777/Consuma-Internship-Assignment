@@ -1,4 +1,4 @@
-"""X3 — worker bootstrap / dependency wiring (spec §5; CLAUDE.md boundary).
+"""Worker bootstrap / dependency wiring.
 
 One place that constructs and wires every adapter the pipeline handlers need —
 broker connection + channel + exchange, the Postgres engine, a single shared
@@ -9,7 +9,7 @@ keeps the worker dependent on ``core`` only, never the gateway.
 
 Two boot-time side effects belong here and nowhere else:
   * ``configure_logging()`` — once per process, so every line carries job_id.
-  * ``Semaphore.ensure_slots()`` — the X4 idempotent, exactly-once token seed.
+  * ``Semaphore.ensure_slots()`` — the idempotent, exactly-once token seed.
     N workers all call it on boot; the atomic Lua marker guarantees the pool
     converges to exactly N tokens (never N×slots).
 """
@@ -52,7 +52,7 @@ async def build_context(settings: Settings | None = None) -> WorkerContext:
 
     ``settings`` defaults to the cached ``get_settings()`` (the production path);
     tests inject a ``Settings`` pointed at ephemeral containers. Logging is
-    configured and the TTS semaphore pool is seeded (exactly-once, X4) right here.
+    configured and the TTS semaphore pool is seeded (exactly-once) right here.
     """
     settings = settings or get_settings()
     configure_logging()
@@ -66,7 +66,7 @@ async def build_context(settings: Settings | None = None) -> WorkerContext:
 
     redis = get_redis(settings.REDIS_URL)
     semaphore = Semaphore(redis, settings.TTS_CONCURRENCY, lease_ttl=settings.LEASE_TTL_S)
-    await semaphore.ensure_slots()  # X4: idempotent exactly-once seed across all workers
+    await semaphore.ensure_slots()  # idempotent exactly-once seed across all workers
     cache = Cache(redis, ttl=settings.CACHE_TTL_S)
 
     minio = Minio(

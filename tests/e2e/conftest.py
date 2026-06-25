@@ -1,11 +1,11 @@
-"""T1 — shared L4 e2e scaffolding (06-e2e.md).
+"""Shared e2e scaffolding.
 
-Unlike the L3 integration suite (fresh testcontainers, handlers called directly),
+Unlike the integration suite (fresh testcontainers, handlers called directly),
 these probes drive the REAL running compose stack: POST to the live gateway, poll
 ``GET /status``, inject duplicate events on the live broker, and ``docker kill``
 named containers under fault injection.
 
-``stack`` guarantees the stack is up AND running CURRENT code. The pre-Phase-4
+``stack`` guarantees the stack is up AND running CURRENT code. An older
 worker image is an idle skeleton that consumes nothing, so "reuse whatever is
 running" silently hangs every probe (a job sits in PENDING forever). We therefore
 ``docker compose up -d --build`` once per session — a near-instant layer-cache

@@ -1,7 +1,7 @@
-"""Gateway Pydantic schemas (spec §5, R2.2b).
+"""Gateway Pydantic schemas.
 
 Strict input/output contracts at the HTTP boundary. Empty manuscript is allowed
-— it becomes a 0-block job that terminates via the zero-block path (R2.3).
+— it becomes a 0-block job that terminates via the zero-block path.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class JobStatusResponse(BaseModel):
 
 
 class StatsResponse(BaseModel):
-    """Runtime aggregate (G7 / R5.1).
+    """Runtime aggregate.
 
     ``jobs`` is zero-filled across every FSM state so the JSON shape is stable
     for dashboards regardless of which statuses currently have rows.

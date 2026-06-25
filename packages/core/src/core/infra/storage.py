@@ -1,18 +1,18 @@
-"""MinIO adapter — object bytes (spec §5, §7).
+"""MinIO adapter — object bytes.
 
 The minio SDK is synchronous; all public functions here are async wrappers
 that run the sync calls in the default thread-pool executor so they don't
 block the event loop.
 
 Bucket layout:
-  raw/<job_id>.txt     — manuscript uploaded at ingestion (R2.2)
-  tts/<hash>.wav       — per-block TTS audio, keyed by content hash (R4.2)
-  out/<job_id>.mp3     — final stitched drama (R4.3)
+  raw/<job_id>.txt     — manuscript uploaded at ingestion
+  tts/<hash>.wav       — per-block TTS audio, keyed by content hash
+  out/<job_id>.mp3     — final stitched drama
 
 The hash-as-key design means two identical text blocks write to the same
-MinIO object — zero wasted vendor calls and zero wasted storage (R4.2 cache).
+MinIO object — zero wasted vendor calls and zero wasted storage (cache).
 
-H-DANGLE invariant — object lifetime >= cache TTL:
+Invariant — object lifetime >= cache TTL:
   The Redis content cache (tts:cache:<hash>, TTL = CACHE_TTL_S) maps a block hash
   to its MinIO object key. A cache HIT skips the vendor call and reads the object
   directly, so the object MUST still exist whenever a cache entry can. If an object
@@ -20,7 +20,7 @@ H-DANGLE invariant — object lifetime >= cache TTL:
   download 404 mid-pipeline. We therefore keep the simplest correct policy: this
   adapter installs NO bucket lifecycle rule, so tts/ objects never expire and always
   outlive any cache entry. Do NOT add an expiration lifecycle on tts/ shorter than
-  CACHE_TTL_S. (Guarded by tests/integration/test_storage.py; see DOC2/DECISIONS.)
+  CACHE_TTL_S. (Guarded by tests/integration/test_storage.py; see DECISIONS.)
 """
 
 from __future__ import annotations
