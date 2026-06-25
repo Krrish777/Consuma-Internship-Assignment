@@ -17,40 +17,48 @@
       "rung": 0,
       "behavior": "Worker boots, connects to RabbitMQ via connect_robust, and idles without crashing.",
       "verification": ["docker compose up worker -> logs 'worker connected'"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "docker logs consuma-worker-1 -> INFO:worker:worker connected; idle. RABBITMQ_ERLANG_COOKIE fix added to compose. All 6 services healthy. Commit ab425da + working-tree (pending commit)"
     },
     {
       "id": "R0.3",
       "rung": 0,
       "behavior": "Full 6-service docker-compose stack builds and all services report healthy.",
       "verification": ["./init.sh -> all services healthy; exit 0"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "bash init.sh -> All services healthy -> 21 passed, exit 0. Commit ab425da + working-tree (pending commit)"
+    },
+    {
+      "id": "R0.4",
+      "rung": 0,
+      "behavior": "Structured logging (core/infra/logging.py): configure_logging() + get_logger(name); job_id/task_id bound via contextvars so concurrent jobs don't bleed ids; every log line carries job_id (the trace key). No print/breakpoint anywhere.",
+      "verification": ["uv run pytest tests/unit -k logging (bound job_id present in emitted line; two concurrent contexts don't bleed ids; pure, no Docker)"],
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k logging -> 6 passed (configure, bind, filter stamp, get_logger, concurrent isolation). Commit ab425da + working-tree (pending commit)"
     },
     {
       "id": "R1.1",
       "rung": 1,
       "behavior": "SQLAlchemy models Job, Task, ProcessedEvent + Alembic migration; durable truth in Postgres.",
       "verification": ["uv run pytest tests/integration -k models (Postgres via testcontainers)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k models -> 4 passed (job CRUD, task unique constraint, processed_event ON CONFLICT dedup, atomic pending_count decrement). Commit ab425da + working-tree (pending commit)"
     },
     {
       "id": "R1.2",
       "rung": 1,
       "behavior": "Job FSM can_transition() enforces legal transitions (PENDING->PARSING->GENERATING->STITCHING->COMPLETED; any->FAILED).",
       "verification": ["uv run pytest tests/unit -k state_machine (pure, no Docker)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k state_machine -> 8 passed (forward path, terminal states, backwards, skip). Commit ab425da + working-tree (pending commit)"
     },
     {
       "id": "R1.3",
       "rung": 1,
       "behavior": "MinIO storage adapter: ensure_bucket, put_text/get_text, put_bytes/get_bytes, list_prefix.",
       "verification": ["uv run pytest tests/integration -k storage (MinIO via testcontainers)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k storage -> 5 passed (idempotent bucket, text roundtrip, bytes roundtrip, list_prefix, key_exists). Commit ab425da + working-tree (pending commit)"
     },
     {
       "id": "R1.4",
@@ -61,18 +69,58 @@
       "evidence": "uv run pytest tests/unit -k events -> 7 passed; commit b6f68f3 (fmt b5a7870)"
     },
     {
+      "id": "R2.0",
+      "rung": 2,
+      "behavior": "Vendor simulation & fault injection (the probe substrate per SPEC 1-2): simulate parse/TTS vendor calls with asyncio.sleep + seedable randomized failure. Parse injects a 15% 500-error rate (transient -> exercises retry). A deterministic 'poison' manuscript always fails (-> exercises DLQ after 3). Seedable so failure behavior is unit-assertable.",
+      "verification": ["uv run pytest tests/unit -k fault_injection (rate=0.0 never fails; rate=1.0 always fails; fixed seed reproducible; poison manuscript always raises; pure, no Docker)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
       "id": "R2.1",
       "rung": 2,
       "behavior": "Broker topology declared: exchange + q.parse/q.tts/q.stitch + per-stage retry ladder (1/4/16s) + q.dlq.",
       "verification": ["uv run pytest tests/integration -k topology (RabbitMQ via testcontainers)"],
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k topology -> 5 passed (live queues, retry queues with TTL/DLX, retry routing, DLQ after max_retries, x-retry-count header). H-XDEATH + H-TTLHOL addressed. Commit ab425da + working-tree (pending commit)"
+    },
+    {
+      "id": "R2.2a",
+      "rung": 2,
+      "behavior": "Gateway lifespan startup wiring (G2): on startup open robust broker.connect + channel + declare topology + grab the pipeline exchange; db engine; storage.ensure_bucket(); stash on app.state. Open once (not per-request); close cleanly on shutdown.",
+      "verification": ["uv run pytest tests/integration -k lifespan (app starts; app.state.exchange usable to publish; shuts down without leaking connections)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R2.2b",
+      "rung": 2,
+      "behavior": "Gateway pydantic schemas (gateway/schemas.py, G4): CreateJobRequest{manuscript, callback_url?}, JobAccepted{job_id}, JobStatusResponse{job_id, status, ...}. Empty manuscript allowed (becomes a 0-block job that still terminates).",
+      "verification": ["uv run pytest tests/unit -k schemas (valid body parses; missing manuscript -> validation error; pure, no Docker)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R2.2c",
+      "rung": 2,
+      "behavior": "Gateway CORS + error handlers (G3): CORSMiddleware + exception handlers. Bad body -> 422 structured JSON; unhandled raise -> 500 JSON (never an HTML stack page). Error bodies machine-readable, carrying job_id when one exists.",
+      "verification": ["uv run pytest tests/unit -k error_handlers (bad POST body -> 422 JSON; internal raise -> 500 JSON)"],
       "status": "not_started",
       "evidence": ""
     },
     {
       "id": "R2.2",
       "rung": 2,
-      "behavior": "Ingestion: POST /jobs saves manuscript .txt to MinIO, inserts Job(PENDING), publishes JobCreated; GET /status/{id} reflects state.",
-      "verification": ["uv run pytest tests/integration -k ingestion (POST /jobs -> 202 + Job PENDING + event published)"],
+      "behavior": "Ingestion (G5): POST /jobs -> storage.put_text(raw/<job>.txt) -> insert Job(PENDING) + COMMIT -> THEN publish JobCreated to q.parse -> 202 + {job_id}. Dual-write order is load-bearing: MinIO -> DB commit -> publish.",
+      "verification": ["uv run pytest tests/integration -k ingestion (POST /jobs -> 202 + Job PENDING in PG + raw/<job>.txt in MinIO + JobCreated on q.parse)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R2.2d",
+      "rung": 2,
+      "behavior": "Status read (G6): GET /status/{job_id} -> job status (+ optional pending_count progress); unknown id -> 404.",
+      "verification": ["uv run pytest tests/integration -k status (known id -> its status; unknown id -> 404)"],
       "status": "not_started",
       "evidence": ""
     },
@@ -105,6 +153,14 @@
       "rung": 3,
       "behavior": "DLQ: poison pill dead-letters after 3 retries with exponential backoff, off the hot queue (no head-of-line blocking of healthy traffic). Job -> FAILED.",
       "verification": ["make e2e -k poison_pill (-> DLQ after 3 attempts; concurrent healthy jobs still complete)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R3.4",
+      "rung": 3,
+      "behavior": "PENDING-sweeper/reconciler (G8, closes the gateway dual-write seam BACKLOG H1): periodic task re-publishes JobCreated for jobs stuck PENDING past a generous timeout. The Job row IS its own outbox; idempotent parse (R3.2) makes a re-publish safe. 'Ack last' is a consumer rule and cannot cover the gateway producer.",
+      "verification": ["uv run pytest tests/integration -k sweeper (insert Job(PENDING) with NO event published -> after one sweep JobCreated is on q.parse and the job progresses)"],
       "status": "not_started",
       "evidence": ""
     },
