@@ -394,8 +394,8 @@
       "rung": 2,
       "behavior": "Parse handler: split blocks, write N Task rows + pending_count=N in ONE transaction, fan-out TtsRequested xN, advance GENERATING. 0-block manuscript -> STITCHING directly (no hang).",
       "verification": ["uv run pytest tests/integration -k parse_fanout AND -k zero_block_terminates"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "Rung-row owner of the parse handler at L3; fully realised by W3 (worker/handlers/parse.py). uv run pytest tests/integration -k 'parse_fanout or zero_block_terminates' -> 2 passed (test_parse_fanout: N blocks -> N tasks + pending_count=N + N TtsRequested; test_zero_block_terminates: 0-block manuscript -> STITCHING/StitchReady, no hang) against the live pg+rmq+redis+minio stack. Same L3 verify as W3 (precedent: G7->R5.1, G8->R3.4 flipped directly). make check green (106 unit, mypy 67 files). commit 700e587 HEAD anchor (user handles git)."
     },
     {
       "id": "R3.1",
