@@ -7,8 +7,7 @@ blocks back into one final track.
 The focus here is reliability rather than the happy path. The services are choreographed with
 no central orchestrator: each stage reacts to a broker event and publishes the next one.
 Correctness under crashes, duplicate deliveries, and bad input comes from where state is kept
-and how each "commit then publish" boundary is made safe, not from a coordinator. The reasoning
-behind the design is in [ARCHITECTURE.md](ARCHITECTURE.md).
+and how each "commit then publish" boundary is made safe, not from a coordinator.
 
 ## Architecture
 
@@ -88,8 +87,3 @@ make demo-poison     # a poison block exhausts its retries and lands in the DLQ,
 make demo-duplicate  # a duplicate delivery is absorbed, with no double work
 make demo            # all three, narrated, for a recording
 ```
-
-## Where to read more
-
-- [ARCHITECTURE.md](ARCHITECTURE.md) covers the design: where data lives, the atomic fan-in,
-  the four crash points, and why this is exactly-once in effect rather than in delivery.
