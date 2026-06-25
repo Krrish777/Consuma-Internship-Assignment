@@ -67,9 +67,7 @@ async def complete_task_and_decrement(
     return int(remaining)
 
 
-async def fail_task_and_decrement(
-    session: AsyncSession, job_id: str, task_id: str
-) -> int | None:
+async def fail_task_and_decrement(session: AsyncSession, job_id: str, task_id: str) -> int | None:
     """DLQ fan-in resolver (W7/H4) — mark a poisoned task FAILED, then decrement.
 
     Same atomic shape as :func:`complete_task_and_decrement`, but it records the
