@@ -1,0 +1,139 @@
+"""Phase 2 Redis coordination — integration tests (Redis via testcontainers).
+
+One module-scoped real Redis container backs every card here (R1 client, R2
+semaphore, X4 init, X5 reaper, R3 cache, H8 stampede, R4inbox fast-path). Each
+test flushes the keyspace first so cards don't bleed state into each other.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator, Iterator
+
+import pytest
+from testcontainers.redis import RedisContainer
+
+from core.infra import redis as redis_infra
+from core.infra.redis import Semaphore
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope="module")
+def redis_url() -> Iterator[str]:
+    with RedisContainer("redis:7-alpine") as container:
+        host = container.get_container_host_ip()
+        port = container.get_exposed_port(6379)
+        yield f"redis://{host}:{port}/0"
+
+
+@pytest.fixture
+async def client(redis_url: str) -> AsyncIterator[redis_infra.Redis]:
+    c = redis_infra.get_redis(redis_url)
+    await c.flushdb()
+    try:
+        yield c
+    finally:
+        await c.aclose()
+
+
+# --- R1: client adapter -------------------------------------------------------
+
+
+async def test_get_redis_pings(client: redis_infra.Redis) -> None:
+    assert await redis_infra.ping(client) is True
+
+
+async def test_get_redis_keeps_bytes(client: redis_infra.Redis) -> None:
+    # decode_responses=False -> GET returns raw bytes (we store hashes/tokens).
+    await client.set("k", "v")
+    assert await client.get("k") == b"v"
+
+
+# --- R2: leased N-token semaphore --------------------------------------------
+
+
+async def test_semaphore_bounds_to_slots(client: redis_infra.Redis) -> None:
+    # X4 will seed the pool in production; here we seed it by hand.
+    await client.rpush("tts:slots", "0", "1")
+    sem = Semaphore(client, slots=2, lease_ttl=30)
+
+    t0 = await sem.acquire("w0")
+    t1 = await sem.acquire("w1")
+    assert t0 is not None and t1 is not None
+    assert {t0, t1} == {"0", "1"}
+
+    # Pool is empty: a 3rd acquire must BLOCK, not hand out a 3rd token.
+    assert await sem.acquire("w2", timeout=1) is None
+
+    # Release one -> the 3rd acquire now succeeds with the returned token.
+    await sem.release(t0)
+    t2 = await sem.acquire("w2", timeout=2)
+    assert t2 == t0
+
+
+async def test_acquire_records_lease_with_ttl(client: redis_infra.Redis) -> None:
+    await client.rpush("tts:slots", "0")
+    sem = Semaphore(client, slots=1, lease_ttl=30)
+
+    token = await sem.acquire("worker-A")
+    assert token is not None
+    ttl = await client.ttl(f"tts:lease:{token}")
+    assert 0 < ttl <= 30
+    assert await client.get(f"tts:lease:{token}") == b"worker-A"
+
+
+async def test_release_clears_lease_and_returns_token(client: redis_infra.Redis) -> None:
+    await client.rpush("tts:slots", "0")
+    sem = Semaphore(client, slots=1, lease_ttl=30)
+
+    token = await sem.acquire("w0")
+    assert token is not None
+    assert await client.llen("tts:slots") == 0  # token is out
+    await sem.release(token)
+    assert await client.llen("tts:slots") == 1  # token is back
+    assert await client.exists(f"tts:lease:{token}") == 0  # lease cleared
+
+
+async def test_slot_context_manager_releases_on_exception(client: redis_infra.Redis) -> None:
+    await client.rpush("tts:slots", "0")
+    sem = Semaphore(client, slots=1, lease_ttl=30)
+
+    with pytest.raises(RuntimeError):
+        async with sem.slot("w0") as token:
+            assert token == "0"
+            assert await client.llen("tts:slots") == 0
+            raise RuntimeError("boom mid-slot")
+
+    # Even though the body raised, the token must be back in the pool.
+    assert await client.llen("tts:slots") == 1
+    assert await client.exists("tts:lease:0") == 0
+
+
+# --- X4: semaphore init idempotency (the 3xN-tokens bug) ----------------------
+
+
+async def test_ensure_slots_converges_to_exactly_n_under_concurrency(
+    client: redis_infra.Redis,
+) -> None:
+    # 5 workers race to seed the SAME pool concurrently. The naive RPUSH-N-on-boot
+    # would leave 5*N tokens; atomic Lua must converge to exactly N.
+    workers = [Semaphore(client, slots=3, lease_ttl=30) for _ in range(5)]
+    await asyncio.gather(*(w.ensure_slots() for w in workers))
+
+    assert await client.llen("tts:slots") == 3
+    tokens = await client.lrange("tts:slots", 0, -1)
+    assert sorted(redis_infra._as_str(t) for t in tokens) == ["0", "1", "2"]
+
+
+async def test_ensure_slots_is_init_once_not_top_up(client: redis_infra.Redis) -> None:
+    sem = Semaphore(client, slots=3, lease_ttl=30)
+    await sem.ensure_slots()
+
+    token = await sem.acquire("w0")  # consume one -> 2 remain
+    assert token is not None
+
+    # A second ensure_slots (e.g. a worker reboot) MUST NOT top the pool back to 3 —
+    # that would re-introduce the 3xN over-provisioning bug.
+    await sem.ensure_slots()
+    assert await client.llen("tts:slots") == 2

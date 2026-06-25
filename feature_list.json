@@ -200,6 +200,62 @@
       "evidence": "uv run pytest tests/unit -k 'state_machine or fsm' -> 12 passed (8 original transition tests still green + 4 new: forward-path predecessors, FAILED=all-non-terminal, PENDING no-predecessors, exact-inverse-of-can_transition property); CAS contract + rowcount-0-is-normal documented in state.py docstring; domain stays I/O-free (test_architecture green); full gate: ruff+fmt clean, mypy 43 files 0 errors, pytest tests/unit 84 passed; commit 0aff00f HEAD anchor (user handles git)"
     },
     {
+      "id": "R1",
+      "rung": 4,
+      "behavior": "Async Redis client adapter (BOM 06-R1, root of rung R4.1): core/infra/redis.py get_redis(url) returns redis.from_url(url, decode_responses=False) (NOT awaited; keep bytes for hashes/tokens); async ping(client)->bool health helper. Uses redis.asyncio (NOT sync redis, NOT dead aioredis). Build once, share; close via aclose() (8.x rename). Mirrors infra/db.py get_engine shape.",
+      "verification": ["uv run pytest tests/integration -k redis (ping round-trips against a real Redis container)"],
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k redis -> 2 passed (ping round-trips; decode_responses=False keeps bytes) against a real redis:7-alpine testcontainer; get_redis/ping in core/infra/redis.py replace the docstring stub; full gate: ruff+fmt clean, mypy 1 file (whole-project make check) 0 errors, pytest tests/unit 82 passed; commit 6203aeb HEAD anchor (user handles git)"
+    },
+    {
+      "id": "R2",
+      "rung": 4,
+      "behavior": "Leased N-token Redis semaphore (BOM 06-R2, Constraint A: global TTS limit=3 across ALL workers): Semaphore(slots_key, slots, lease_ttl) with acquire(owner)->token via blocking BLPOP (no busy-poll) + SET lease key NX EX, release(token) deletes lease + RPUSH token back, async-with wrapper releasing even on exception. Never asyncio.Semaphore. Cache checked BEFORE acquire (a hit burns no token).",
+      "verification": ["uv run pytest tests/integration -k redis (slots=2: 3rd acquire blocks until a release; never >slots tokens out)"],
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k redis -> 6 passed (4 new R2: slots=2 bounds concurrency + 3rd acquire blocks then succeeds after release; acquire records tts:lease:<token> with TTL<=lease_ttl; release clears lease + returns token; async-with slot releases token+lease even on exception) against real redis:7-alpine; Semaphore (BLPOP acquire / lease SET NX EX / delete-lease-then-RPUSH release) in core/infra/redis.py; full gate: ruff+fmt clean, mypy 44 files 0 errors, pytest tests/unit 82 passed; commit 6203aeb HEAD anchor (user handles git)"
+    },
+    {
+      "id": "X4",
+      "rung": 4,
+      "behavior": "Semaphore init idempotency (BOM 12-X4, the 3xN-tokens footgun): ensure_slots() seeds exactly N tokens exactly-once across ALL workers via atomic Lua (init-marker: if unset DEL slots_key + RPUSH N tokens 0..N-1 + set marker; else no-op). Converges to exactly N regardless of how many workers call it concurrently. Never unconditional RPUSH on boot.",
+      "verification": ["uv run pytest tests/integration -k redis (5 concurrent ensure_slots -> LLEN tts:slots == N exactly)"],
+      "status": "in_progress",
+      "evidence": ""
+    },
+    {
+      "id": "X5",
+      "rung": 4,
+      "behavior": "Lease reaper: heartbeat renew + atomic reclaim (BOM 12-X5, H6): acquire spawns a heartbeat task re-SET lease XX EX every ttl/3 (cancel on release) so a healthy-but-slow holder is never reclaimed; reap() atomically (Lua, owner-checked) RPUSHes expired-but-unreturned tokens back exactly once (concurrent reapers return a token at most once). Documented as soft/best-effort limit, breaches logged.",
+      "verification": ["uv run pytest tests/integration -k redis (stopped-heartbeat holder reclaimed after TTL; heartbeating holder keeps token; two reapers reclaim once)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R3",
+      "rung": 4,
+      "behavior": "Content-hash cache (BOM 06-R3, Constraint B cost-idempotency): cache_get(h)->str|None (GET tts:cache:{h}), cache_set(h,url) (SETEX tts:cache:{h} CACHE_TTL_S url). Keyed on canonical content_hash (D4), never task_id. CACHE_TTL_S <= MinIO object lifetime (H-DANGLE). Consulted before slot acquire; not durable truth (rebuildable from MinIO).",
+      "verification": ["uv run pytest tests/integration -k redis (set then get returns url; missing hash -> None; entry expires after TTL)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "H8",
+      "rung": 4,
+      "behavior": "Cache stampede in-flight lock (BOM backlog-H8): acquire_inflight(h)->bool true if caller won SET tts:inflight:{h} NX EX (it synthesizes); losers wait (bounded) for cache_get then use it -> at most one vendor call per identical-block burst. MUST NOT hold a TTS slot while waiting on the in-flight lock. OR a documented deliberate simplification in module + DOC2.",
+      "verification": ["uv run pytest tests/integration -k redis (K concurrent acquire_inflight for one hash -> exactly one True; rest observe populated cache)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
+      "id": "R4inbox",
+      "rung": 3,
+      "behavior": "Idempotency fast-path + inbox helpers (BOM 06-R4 / 03-B5, exactly-once effect): durable mark_event(session, event_id)->bool via dialect insert(ProcessedEvent).on_conflict_do_nothing() (True first / False duplicate) is the AUTHORITY; Redis seen_once(task_id)->bool SETNX fast-path is non-authoritative optimization (H3). NEVER inbox-skip parse (H2). processed_events retention (H10).",
+      "verification": ["uv run pytest tests/integration -k 'models or redis' (mark_event twice -> True then False; seen_once twice -> True then False; retention deletes aged rows)"],
+      "status": "not_started",
+      "evidence": ""
+    },
+    {
       "id": "R2.3",
       "rung": 2,
       "behavior": "Parse handler: split blocks, write N Task rows + pending_count=N in ONE transaction, fan-out TtsRequested xN, advance GENERATING. 0-block manuscript -> STITCHING directly (no hang).",
