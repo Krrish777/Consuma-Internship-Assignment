@@ -532,6 +532,28 @@
       "verification": ["[L1] config asserted in a unit test (prefetch_for q.tts <= TTS_CONCURRENCY+1 < PREFETCH); [L4] R3.1 bounded redelivery"],
       "status": "passing",
       "evidence": "Already implemented in W1 (worker/main.py prefetch_for + per-queue channels in register_consumers, since set_qos is channel-wide). [L1] uv run pytest tests/unit -k prefetch -> 2 passed: prefetch_for(q.tts)=TTS_CONCURRENCY+1=4 asserted <= TTS_CONCURRENCY+1 AND < global PREFETCH=16; prefetch_for(q.parse)==prefetch_for(q.stitch)==PREFETCH. [L4] uv run pytest -m e2e -k crash_recovery -> 1 passed in 315s against the live stack (bounded redelivery: job survives worker docker-kill and converges to COMPLETED; a small q.tts unacked backlog means a bounded crash blast radius). Closed the card's documentation step: prefetch_for docstring now explains WHY parse/stitch keep the larger prefetch (their handlers never block on a scarce leased resource — they run to completion once scheduled, so a deep prefetch only keeps the pipeline fed and parks nothing unacked; only q.tts gates on the global 3-slot semaphore, so only q.tts needs the small bound). make check green (106 unit, ruff+fmt clean, mypy). commit 700e587 base (uncommitted; user handles git)."
+    },
+    {
+      "id": "DOC1",
+      "rung": 5,
+      "behavior": "Correct docs/SPEC.md §4 so the source of truth matches the built code (it predated the 2026-06-24 arch review and taught several S0/S1 bugs), and append one append-only DECISIONS.md entry per correction. 7 corrections: (1) drop x-death.count gating -> custom x-retry-count header (H-XDEATH); (2) fan-in idempotency = conditional tasks.status UPDATE in the decrement tx, not Redis SETNX (H3); (3) parse is a re-publishable emitter, never inbox-skipped (H2/H15); (4) add the PENDING-sweeper as the gateway's outbox-via-state reconciler (H1); (5) add the DLQ<->fan-in rule (H4); (6) add stitch idempotency + FSM compare-and-set (H5/H-FSM); (7) add the SSRF/manuscript-size/block-count security notes (H-SSRF/H13/H14). MUST: spec, decisions log, and code agree (no doc still teaching a fixed bug). MUST NOT: edit old DECISIONS entries (append-only).",
+      "verification": [
+        "uv run pytest tests/unit/test_spec_consistency.py (SPEC §4 no longer gates on x-death.count; all 7 corrected topics + manuscript-size/block-count present)",
+        "make check (ruff+fmt+mypy+unit green)"
+      ],
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit/test_spec_consistency.py -> 3 passed (test_spec_no_longer_teaches_x_death_count_gating: the 'gate on the `x-death`' instruction is gone; test_spec_section_4_documents_all_seven_corrections: x-retry-count, conditional `tasks.status`, re-publishable emitter, PENDING-sweeper, 'resolve the fan-in barrier', compare-and-set, ssrf all present; test_spec_section_4_covers_size_and_block_count_security_notes: manuscript-size + block-count present). TDD: wrote the L1 guard first (RED, caught a real test bug — the old gating phrase wraps across a newline so a naive contiguous-substring search passed vacuously; fixed by collapsing whitespace before matching), then rewrote §4 (GREEN). docs/SPEC.md §4 rewritten: idempotency-layers bullet now states the durable conditional tasks.status UPDATE is the fan-in authority (Redis SETNX = non-authoritative fast-path only) and parse re-publishes all N on redelivery (never inbox-skipped, begin_parse seeds pending_count once); DLQ-ladder bullet gates on x-retry-count not x-death.count (frozen on RabbitMQ >=3.13); NEW bullets for DLQ<->fan-in (W7), PENDING-sweeper (G8/H1), stitch idempotency + FSM CAS (W5/H-FSM), and security notes (H-SSRF/H13/H14 + webhook-failure-!=-job-failure). 7 dated per-correction bullets appended to docs/DECISIONS.md (append-only; no old entry edited). make check green: ruff+fmt clean, mypy --strict, 109 unit passed (106 + 3 new). All deps passing (B4,W3,W7,G8,W5,H-FSM,H-SSRF). commit 700e587 base (uncommitted; user handles git)."
+    },
+    {
+      "id": "DOC2",
+      "rung": 5,
+      "behavior": "Create ARCHITECTURE.md (repo root): a one-page reviewer-facing defense answering rubric dimension 1 ('did you choose, or copy?'). (1) data-placement table with a one-sentence boundary defense each (Postgres = durable truth, Redis = ephemeral coordination, MinIO = bytes, RabbitMQ = pointers never payloads); (2) the fan-in section (atomic UPDATE...RETURNING not a Python counter; idempotency guard = durable conditional tasks.status UPDATE not Redis); (3) the four seams (gateway/parse/tts/stitch) — crash window + converging mechanism each mapped to a passing Phase-6 e2e probe; (4) exactly-once effect = at-least-once delivery + idempotent processing (one paragraph); (5) honest limits (soft semaphore X5, H8 if taken, Redis-bounce gap, H-DANGLE). MUST: every claim maps to real code + a passing probe (no aspirational prose). MUST NOT: claim 'exactly-once delivery'.",
+      "verification": [
+        "[L1] manual read; every named mechanism exists in code and has a green probe (cross-checked against feature_list.json passing cards + tests/e2e)",
+        "a tiny guard test that ARCHITECTURE.md exists and contains the required sections + the honest-limits disclaimer"
+      ],
+      "status": "in_progress",
+      "evidence": ""
     }
   ]
 }

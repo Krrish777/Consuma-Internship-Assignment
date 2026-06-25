@@ -472,3 +472,28 @@ maps to its owning card (all `passing`) and is pinned by an L1 guard test (`test
   wraps prose across lines (the old `Gate\n  on the \`x-death\`` split would otherwise evade a naive substring
   check). Changed files: docs/SPEC.md (§4 rewrite), tests/unit/test_spec_consistency.py (new), this entry.
   commit 700e587 base; uncommitted (user handles git).
+
+## 2026-06-25 · Phase 8 / DOC2 — ARCHITECTURE.md (the reviewer-facing boundary defense)
+Created `ARCHITECTURE.md` at the repo root: a one-page answer to rubric dimension 1 ("did you choose, or
+copy?"). Five sections: (1) a data-placement table with a one-sentence defense per primitive
+(Postgres = durable truth · Redis = ephemeral coordination · MinIO = bytes · RabbitMQ = pointers, never
+payloads); (2) the fan-in barrier (atomic `UPDATE…RETURNING`, not a Python counter; the idempotency guard is
+the durable conditional `tasks.status` UPDATE, not Redis SETNX); (3) the **four seams** (gateway/parse/tts/
+stitch) — each crash window + the mechanism that converges it (ack-last, sweeper, re-publishable parse, H-EMIT,
+FSM CAS short-circuit) mapped to a named passing probe; (4) exactly-once *effect* = at-least-once delivery +
+idempotent processing; (5) honest limits.
+- **Closed two deferrals here (as the cards promised):** the H-DANGLE invariant (objects never expire ⇒ no
+  dangling cache key) is stated in the MinIO row + §1; the Redis-bounce semaphore gap (no volume + boot-only
+  `ensure_slots`) is stated as a known, unfixed limit in §5 rather than hidden.
+- **MUST NOT honored:** the doc never claims "exactly-once *delivery*" — it explicitly frames the guarantee as
+  at-least-once delivery + idempotent effect. The guard test asserts both the disclaimer's presence and the
+  absence of any affirmative "guarantees exactly-once delivery" claim.
+- **No aspirational prose:** every named mechanism is a `passing` card and every seam cites a real test file
+  (verified to exist: e2e test_crash_recovery / test_duplicate_delivery / test_cache_fanin / test_poison_pill /
+  test_stitch_webhook / test_behavior; integration test_sweeper / test_parse / test_stitch / test_webhook /
+  test_redis).
+- **Verified:** TDD — wrote `tests/unit/test_architecture_doc.py` first (RED, file missing), then the doc (GREEN);
+  4 tests (exists; all required sections incl. soft-semaphore + honest-limits; at-least-once stated + exactly-once
+  *delivery* disclaimed + no affirmative claim; seams cite real probes). `make check` green: ruff+fmt clean,
+  mypy --strict, 113 unit passed (109 + 4 new). Changed files: ARCHITECTURE.md (new),
+  tests/unit/test_architecture_doc.py (new), this entry. commit 700e587 base; uncommitted (user handles git).
