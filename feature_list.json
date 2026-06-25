@@ -382,6 +382,14 @@
       "evidence": "uv run pytest tests/integration -k webhook -> 3 passed (delivered: allowlisted+allowed URL receives JSON payload {job_id,status=COMPLETED,final_key}; failure-tolerant: httpx.ConnectError swallowed -> job stays COMPLETED with asset intact (MUST #8); log-only: empty allowlist -> httpx.AsyncClient never constructed) against real pg+rmq+redis+minio. _notify in worker/handlers/stitch.py called after finalize (outside raise-path, never on retry ladder): no callback -> skip; empty allowlist -> log-only; else is_allowed (H-SSRF) guard then httpx.post(follow_redirects=False, timeout=WEBHOOK_TIMEOUT_S), all failures logged+swallowed. Live e2e is Phase-6 R4.3; here L3. full gate: ruff+fmt clean, mypy 64 files 0 errors, pytest tests/unit 106 passed; commit f62825c HEAD anchor (user handles git)"
     },
     {
+      "id": "H13",
+      "rung": 2,
+      "behavior": "Manuscript max-size guard at ingestion (BOM backlog-H13): an unbounded manuscript body buffered in gateway memory is a DoS vector. Enforce MAX_MANUSCRIPT_BYTES (F0.2): reject oversized request bodies with a clean machine-readable 413 BEFORE the body is buffered into the pydantic model (a Content-Length pre-check in HTTP middleware, since checking len(body.manuscript) in the route is already too late to prevent the OOM). Preserve the load-bearing dual-write order (MinIO -> DB commit -> publish) for the accepted path.",
+      "verification": ["uv run pytest tests/integration -k ingestion (a body over the cap -> 413 structured JSON; a normal body -> 202 as before)"],
+      "status": "in_progress",
+      "evidence": ""
+    },
+    {
       "id": "R2.3",
       "rung": 2,
       "behavior": "Parse handler: split blocks, write N Task rows + pending_count=N in ONE transaction, fan-out TtsRequested xN, advance GENERATING. 0-block manuscript -> STITCHING directly (no hang).",

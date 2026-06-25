@@ -23,10 +23,11 @@ Run by compose as: uvicorn gateway.main:app --host 0.0.0.0 --port 8000
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from minio import Minio
@@ -86,6 +87,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def guard_manuscript_size(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """H13 — reject an oversized ingestion body BEFORE it is buffered (DoS guard).
+
+    The cap must be enforced above the route: by the time ``create_job`` runs,
+    FastAPI has already read the whole body into the pydantic model, so checking
+    the parsed manuscript there is too late to prevent the OOM. We inspect the
+    declared ``Content-Length`` here instead and reject with a clean, machine-
+    readable 413 — no unbounded body is ever read into memory (H13 MUST).
+
+    This bounds the realistic vector (an honest client declaring a huge body). A
+    chunked upload with no ``Content-Length`` is the residual the card's
+    "or stream to MinIO" alternative would cover; left as a documented gap.
+    """
+    if request.method == "POST" and request.url.path == "/jobs":
+        settings = getattr(request.app.state, "settings", None) or get_settings()
+        content_length = request.headers.get("content-length")
+        if content_length is not None and int(content_length) > settings.MAX_MANUSCRIPT_BYTES:
+            log.warning(
+                "manuscript rejected: too large",
+                extra={"content_length": int(content_length)},
+            )
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "error": "manuscript_too_large",
+                    "max_bytes": settings.MAX_MANUSCRIPT_BYTES,
+                    "job_id": None,
+                },
+            )
+    return await call_next(request)
 
 
 @app.exception_handler(Exception)

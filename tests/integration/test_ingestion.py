@@ -193,3 +193,23 @@ def test_get_status_unknown_job_returns_404(gateway_ctx: dict[str, Any]) -> None
     """GET /status/{unknown} -> 404."""
     r = gateway_ctx["client"].get("/status/this-job-does-not-exist-at-all-00000")
     assert r.status_code == 404
+
+
+# ── H13: manuscript max-size guard ───────────────────────────────────────────
+
+
+def test_post_jobs_oversized_manuscript_returns_413(gateway_ctx: dict[str, Any]) -> None:
+    """A request body over MAX_MANUSCRIPT_BYTES (default 1 MB) -> clean 413 JSON."""
+    oversized = "a" * (1_000_001)  # body Content-Length exceeds the 1 MB cap
+    r = gateway_ctx["client"].post("/jobs", json={"manuscript": oversized})
+    assert r.status_code == 413
+    body = r.json()
+    assert body["error"] == "manuscript_too_large"
+    assert body["max_bytes"] == 1_000_000
+
+
+def test_post_jobs_normal_manuscript_still_accepted(gateway_ctx: dict[str, Any]) -> None:
+    """A normal-sized manuscript is unaffected by the guard -> 202."""
+    r = gateway_ctx["client"].post("/jobs", json={"manuscript": "Within the size cap."})
+    assert r.status_code == 202
+    assert "job_id" in r.json()
