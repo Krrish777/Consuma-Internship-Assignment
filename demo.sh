@@ -63,7 +63,9 @@ run_probe() { # $1 pytest node  $2 claim-on-pass
   local probe_pid=$!
 
   printf "\n%s── live worker/gateway logs (job_id is the trace key) ─────────────%s\n" "$DIM" "$RESET"
-  docker compose logs -f --tail=0 worker gateway &
+  # Drop the Docker healthcheck pings (GET /health) — pure noise that buries the story.
+  docker compose logs -f --tail=0 worker gateway 2>&1 \
+    | grep --line-buffered -vE "GET /health" &
   local logs_pid=$!
 
   wait "$probe_pid"
