@@ -56,8 +56,11 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
     ports: ["9000:9000", "9001:9001"]
     volumes: ["miniodata:/data"]
+    # `mc` is MinIO's first-party CLI and is guaranteed to ship in the server image
+    # (curl has been trimmed from minio images before — don't depend on it on :latest).
+    # `mc ready local` reports cluster readiness (ready to serve I/O), not just liveness.
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -69,6 +72,15 @@ services:
       dockerfile: services/gateway/Dockerfile
     environment: *app-env
     ports: ["8000:8000"]
+    # Healthcheck uses python3 (the image's runtime — no curl/wget in bookworm-slim) so
+    # "all services healthy" actually waits for the lifespan (uvicorn + broker + create_tables)
+    # to finish, not just for the container to start. Without it, clients race the boot.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
     depends_on:
       postgres: {condition: service_healthy}
       rabbitmq: {condition: service_healthy}

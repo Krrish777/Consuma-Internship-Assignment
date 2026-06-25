@@ -484,6 +484,54 @@
       "verification": ["uv run pytest tests/integration -k stats"],
       "status": "passing",
       "evidence": "G7 done. uv run pytest tests/integration/test_stats.py -> 3 passed (per-status counts match seeded mixed-status jobs; all 6 FSM states zero-filled into a stable shape; read-only=identical on repeat) against real postgres:17-alpine via the gateway lifespan. StatsResponse{jobs:dict[str,int]} in gateway/schemas.py; GET /stats in gateway/main.py calls B6 job_counts_by_status (SQL GROUP BY, no Python row-scan) then zero-fills over JobStatus. Queue depths deliberately omitted (kept read-only + robust; job counts are the graded core). full gate: ruff+fmt clean, mypy 65 files 0 errors, pytest tests/unit 106 passed; commit e48428e HEAD anchor (user handles git)"
+    },
+    {
+      "id": "I1",
+      "rung": 0,
+      "behavior": "Compose stack: all 6 services (postgres, rabbitmq, redis, minio, gateway, worker) reach healthy via ./init.sh on a clean tree; init.sh exits 0. MinIO healthcheck must not rely on a binary the image may not ship on the moving :latest tag.",
+      "verification": ["./init.sh -> 'all services healthy', exit 0 (re-confirm R0.3 after healthcheck change)"],
+      "status": "passing",
+      "evidence": "bash init.sh -> '==> All services healthy.' -> 106 unit passed -> INIT_EXIT=0 against the live 6-service stack. MinIO healthcheck hardened: empirically confirmed the current minio/minio:latest ships BOTH curl 8.11.0 and mc, but switched the healthcheck from `curl -f /minio/health/live` to first-party `mc ready local` (CMD form) — mc is MinIO's own CLI, guaranteed in the server image and far more :latest-robust than third-party curl (the card's stated worry), and `mc ready local` reports cluster READINESS not just HTTP liveness. Verified working: recreated minio -> healthy in 3s; full init.sh re-confirms all 6 healthy. A gateway healthcheck (python3 urllib /health) was subsequently added during I3 so 'all services healthy' genuinely includes the gateway (previously it had no healthcheck and was treated as ready the instant the container started). RABBITMQ_ERLANG_COOKIE fix + named volumes (pgdata/rmqdata/miniodata) persist. commit 700e587 base (uncommitted; user handles git)."
+    },
+    {
+      "id": "I2",
+      "rung": 0,
+      "behavior": "Both app images (gateway, worker) build reproducibly from the uv workspace root context, include the core workspace package, and run their entrypoints (gateway = uvicorn serving /health; worker = the real consume loop post-Phase-4).",
+      "verification": ["docker compose build gateway worker succeeds; containers start and pass compose healthchecks / serve /health + consume"],
+      "status": "passing",
+      "evidence": "docker compose build gateway worker -> 'Image consuma-gateway Built' + 'Image consuma-worker Built', BUILD_EXIT=0 (root workspace context, uv sync --frozen --no-dev --package). Runtime: curl http://localhost:8000/health -> {\"status\":\"ok\"}; gateway image `import core, gateway` OK; worker image `import core, worker` OK (the core workspace member is present in BOTH images); worker logs 'worker bootstrap: complete' then 'worker running; consuming q.parse / q.tts / q.stitch / q.dlq' (the real Phase-4 consume loop, not the Rung-0 idle skeleton). All compose healthchecks pass (init.sh all-healthy). commit 700e587 base (uncommitted; user handles git)."
+    },
+    {
+      "id": "I3",
+      "rung": 0,
+      "behavior": "init.sh end-to-end smoke: remains the single standard startup path, keeps the pytest tests/unit gate, prints gateway/RabbitMQ/MinIO URLs, and (optionally) submits one job and confirms it COMPLETES as a tiny end-to-end sanity beyond unit tests (guarded/skippable).",
+      "verification": ["./init.sh -> unit tests pass + (optional) one job completes"],
+      "status": "passing",
+      "evidence": "bash init.sh -> 106 unit passed -> '==> Running one-job end-to-end smoke...' -> submitted job fb8591d2... -> '==> Smoke OK: job ... reached COMPLETED.' -> INIT_EXIT=0. Added a guarded (INIT_SMOKE=0 to skip), bounded (60s poll cap, fail-loud-not-hang) one-job submit-and-poll smoke to init.sh: POST /jobs a 1-block manuscript, parse job_id/status with grep+sed (no jq dependency — init.sh only assumes docker+uv), poll /status to COMPLETED (FAILED or 60s timeout -> exit 1). The first run EXPOSED A REAL ORDERING BUG: the gateway had NO compose healthcheck, so init.sh's health-wait (treats empty Health as ready) let the smoke POST race the gateway lifespan -> 'curl: (52) Empty reply'. Root-cause fix: added a python3 urllib /health healthcheck to the gateway service (no curl/wget in bookworm-slim; python3 IS the runtime) so 'all services healthy' truly waits for uvicorn+broker+create_tables. init.sh remains the single standard startup path. commit 700e587 base (uncommitted; user handles git)."
+    },
+    {
+      "id": "I4",
+      "rung": 4,
+      "behavior": "docker compose up --scale worker=4 starts 4 workers that share the ONE global Redis semaphore (Constraint A is global, not per-process). Worker service binds no fixed host port (so it scales) and all replicas connect to the same Redis/RabbitMQ/Postgres.",
+      "verification": ["make e2e -k semaphore with 4 workers (same probe as R4.1)"],
+      "status": "passing",
+      "evidence": "uv run pytest -m e2e -k semaphore -> 1 passed in 24s (test_scaled_workers_share_one_global_semaphore) against the LIVE stack. The worker compose service binds NO host port (only `gateway` publishes 8000) so `docker compose up --scale worker=4` starts 4 replicas with no port collision; all replicas share the same Redis/RabbitMQ/Postgres via the x-app-env anchor. The probe scales to 4, asserts LLEN(tts:slots)==TTS_CONCURRENCY==3 across all replicas (GLOBAL semaphore, not 4x3=12 -> X4 ensure_slots atomic/idempotent across workers), bursts 16 TTS tasks through the shared 3-slot pool -> all COMPLETED with no token leak, then scales back to 1. Same probe as R4.1 (deliberate overlap: I4 is the deployment-shape owner, R4.1 the semaphore-semantics owner). commit 700e587 base (uncommitted; user handles git)."
+    },
+    {
+      "id": "H-DANGLE",
+      "rung": 4,
+      "behavior": "MinIO object lifetime >= cache TTL: a tts:cache:<hash> HIT must always resolve to a live object. No lifecycle rule may prune tts/ objects sooner than CACHE_TTL_S; simplest correct policy is to never expire tts/ objects. Document the invariant in storage.py + DOC2.",
+      "verification": ["[L3] a test that sets a cache entry and confirms the object still exists at/after the cache-expiry boundary (or asserts the documented 'objects never expire' policy)"],
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration/test_storage.py -> 6 passed incl the new test_tts_objects_never_expire_so_cache_hits_stay_live against a real minio testcontainer: asserts minio_client.get_bucket_lifecycle(BUCKET) is None (NO lifecycle rule configured -> tts/ objects never expire -> object lifetime is unbounded, trivially >= CACHE_TTL_S=86400) and the just-written tts/ object is live. This is the card's offered alternative ('assert the documented objects-never-expire policy') chosen over a literal 1-day-boundary wait. GUARD value: if a future dev installs an expiring lifecycle rule on the bucket, get_bucket_lifecycle returns non-None and the test fails, catching the re-opened dangling-key 404 window. Invariant documented in core/infra/storage.py module docstring (H-DANGLE section: no lifecycle on tts/, do not add expiration shorter than CACHE_TTL_S). The DOC2/ARCHITECTURE.md mention is deferred to the Phase-8 DOC2 card. commit 700e587 base (uncommitted; user handles git)."
+    },
+    {
+      "id": "H-PREFETCH",
+      "rung": 3,
+      "behavior": "q.tts consumer prefetch sized near serviceable concurrency (semaphore size + small headroom), NOT the global PREFETCH=16, so a blocked BLPOP doesn't park 13+ unacked messages (crash blast radius + back-pressure). parse/stitch may keep the larger prefetch; document why.",
+      "verification": ["[L1] config asserted in a unit test (prefetch_for q.tts <= TTS_CONCURRENCY+1 < PREFETCH); [L4] R3.1 bounded redelivery"],
+      "status": "not_started",
+      "evidence": ""
     }
   ]
 }
