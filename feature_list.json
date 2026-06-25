@@ -306,8 +306,8 @@
         "uv run pytest tests/unit -k run_loop (consumers registered from dispatch table; signal handler cancels the shutdown event)",
         "make check (ruff + mypy green)"
       ],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k run_loop -> 2 passed (_request_shutdown sets the drain event; register_consumers wires a consumer for each of q.parse/q.tts/q.stitch, one dedicated channel per queue, via patched broker.consume await_count==3); worker/main.py replaces the idle await asyncio.Future() with build_context -> install_signal_handlers (POSIX add_signal_handler, Windows/non-main-thread signal.signal fallback) -> register_consumers -> await shutdown -> close_context. The live SIGTERM->redeliver path is Phase-6 R3.1 e2e (docker kill); here L1+L2 only. full gate: ruff+fmt clean, mypy 51 files 0 errors, pytest tests/unit 85 passed; commit f62825c HEAD anchor (user handles git)"
     },
     {
       "id": "W1",
