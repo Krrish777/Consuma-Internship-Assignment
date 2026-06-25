@@ -14,13 +14,23 @@ The engine is function-scoped to avoid asyncpg attaching to a stale event loop
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Generator
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from testcontainers.postgres import PostgresContainer
 
-from core.infra.db import Job, ProcessedEvent, Task, create_tables, get_engine, get_session
+from core.infra.db import (
+    Job,
+    ProcessedEvent,
+    Task,
+    create_tables,
+    get_engine,
+    get_session,
+    mark_event,
+    purge_processed_events,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -117,3 +127,37 @@ async def test_pending_count_atomic_decrement(engine: AsyncEngine) -> None:
         await session.commit()
 
     assert count == 1
+
+
+# --- R4inbox: durable idempotency inbox (the authority) ----------------------
+
+
+async def test_mark_event_dedupes_durably(engine: AsyncEngine) -> None:
+    """mark_event is the AUTHORITY: True the first time, False for a duplicate."""
+    async with get_session(engine) as session:
+        assert await mark_event(session, "evt-mark-once") is True  # first delivery
+        assert await mark_event(session, "evt-mark-once") is False  # duplicate absorbed
+        await session.commit()
+
+
+async def test_purge_processed_events_removes_aged_rows(engine: AsyncEngine) -> None:
+    """H10 retention: rows older than the window are deleted; recent ones survive."""
+    async with get_session(engine) as session:
+        session.add(ProcessedEvent(event_id="inbox-fresh"))
+        session.add(
+            ProcessedEvent(
+                event_id="inbox-aged",
+                consumed_at=datetime.now(UTC) - timedelta(days=8),
+            )
+        )
+        await session.commit()
+
+    async with get_session(engine) as session:
+        deleted = await purge_processed_events(session, older_than_seconds=7 * 86_400)
+        await session.commit()
+    assert deleted == 1  # only the 8-day-old row qualifies
+
+    async with get_session(engine) as session:
+        remaining = (await session.execute(select(ProcessedEvent.event_id))).scalars().all()
+    assert "inbox-aged" not in remaining
+    assert "inbox-fresh" in remaining

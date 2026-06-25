@@ -14,18 +14,21 @@ from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import AsyncIterator
+from datetime import datetime, timedelta
+from typing import Any, AsyncIterator, cast
 
 from sqlalchemy import (
+    CursorResult,
     DateTime,
     Enum as PgEnum,
     ForeignKey,
     Index,
     Integer,
     String,
+    delete,
     func,
 )
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
@@ -121,3 +124,31 @@ async def get_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 async def create_tables(conn: AsyncConnection) -> None:
     """Create all tables (used in tests; production uses Alembic migrations)."""
     await conn.run_sync(Base.metadata.create_all)
+
+
+async def mark_event(session: AsyncSession, event_id: str) -> bool:
+    """Durable idempotency inbox — THE authority for exactly-once effect (SPEC §4).
+
+    ``INSERT ... ON CONFLICT DO NOTHING`` (the postgresql dialect insert, which has
+    ``.on_conflict_do_nothing``). Returns True if this event_id was newly recorded
+    (first delivery → process it), False if it was already present (a duplicate
+    delivery → skip). The caller commits in the SAME transaction as the side effect
+    this guards (e.g. the fan-in decrement), so guard and effect are atomic. The
+    Redis ``seen_once`` fast-path sits in front of this but never replaces it — never
+    let ephemeral Redis be the thing protecting the counter (H3).
+    """
+    stmt = pg_insert(ProcessedEvent).values(event_id=event_id).on_conflict_do_nothing()
+    result = cast("CursorResult[Any]", await session.execute(stmt))
+    return result.rowcount == 1
+
+
+async def purge_processed_events(session: AsyncSession, older_than_seconds: int) -> int:
+    """H10 retention — delete inbox rows older than the window; return rows deleted.
+
+    The processed_events inbox grows unbounded otherwise. Uses DB-side ``now()`` so
+    the cutoff is immune to app/DB clock skew. Wire into the sweeper or a small reaper.
+    """
+    cutoff = func.now() - timedelta(seconds=older_than_seconds)
+    stmt = delete(ProcessedEvent).where(ProcessedEvent.consumed_at < cutoff)
+    result = cast("CursorResult[Any]", await session.execute(stmt))
+    return result.rowcount

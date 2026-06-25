@@ -26,15 +26,17 @@ from redis.asyncio import Redis, from_url
 
 from core.infra.logging import get_logger
 
-__all__ = ["Cache", "Redis", "Semaphore", "get_redis", "ping"]
+__all__ = ["Cache", "Redis", "Semaphore", "get_redis", "ping", "seen_once"]
 
 _log = get_logger(__name__)
 
 SLOTS_KEY = "tts:slots"
 CACHE_PREFIX = "tts:cache:"
 INFLIGHT_PREFIX = "tts:inflight:"
+TASK_DONE_PREFIX = "task:done:"
 DEFAULT_CACHE_TTL = 86_400  # 24h; MUST stay <= the MinIO object lifetime (H-DANGLE)
 DEFAULT_INFLIGHT_TTL = 60  # in-flight lock auto-expires if a synthesiser crashes
+DEFAULT_SEEN_TTL = 86_400  # how long the fast-path remembers a processed task_id
 
 
 def _as_str(value: bytes | str) -> str:
@@ -92,6 +94,20 @@ def get_redis(url: str) -> Redis:
 async def ping(client: Redis) -> bool:
     """Liveness check — True when the server answers PONG."""
     return bool(await client.ping())
+
+
+async def seen_once(client: Redis, task_id: str, *, ttl: int = DEFAULT_SEEN_TTL) -> bool:
+    """Redis idempotency fast-path: True the FIRST time a task_id is seen, else False.
+
+    ``SET task:done:<task_id> 1 NX EX`` — a cheap short-circuit for obviously duplicate
+    deliveries (True = first sighting → process; False = already seen → skip). This is
+    NON-authoritative (H3): the durable ``processed_events`` inbox (``db.mark_event``)
+    is the real guard. Redis is "safe to lose" — on a cold Redis this returns True
+    again, but the durable inbox still absorbs the duplicate. NEVER let this be the
+    thing protecting the fan-in counter.
+    """
+    won = await client.set(f"{TASK_DONE_PREFIX}{task_id}", "1", nx=True, ex=ttl)
+    return bool(won)
 
 
 class Semaphore:
