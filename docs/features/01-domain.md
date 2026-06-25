@@ -49,31 +49,37 @@ evidence:
 ---
 
 ### R2.0 — Vendor simulation & fault injection   [rung R2.0] [BOM: 08-W6] [scores: reliability, edge]
-depends_on: —
-files: create `services/worker/src/worker/handlers/_sim.py`, `tests/unit/test_fault_injection.py`
+depends_on: D3 (split_blocks), D4 (content_hash)
+files: `packages/core/src/core/domain/vendor.py`, `tests/unit/test_fault_injection.py`
 context: The AI is simulated (SPEC §1) — this module IS the probe substrate. Parse must inject a
-**15% transient 500-rate** (exercises retry), a deterministic **poison manuscript always fails**
-(exercises DLQ-after-3), and TTS simulates latency (exercises the semaphore). Failure must be
-**seedable** so unit tests are deterministic and e2e tests are reproducible.
-reuse: from scratch.
-api: `asyncio.sleep` for latency; `random.Random(seed)` instance (NOT module-global `random`) for isolation.
+**15% transient 500-rate** (exercises retry) and a deterministic **poison manuscript that always
+fails** (exercises DLQ-after-3); TTS produces deterministic fake audio (feeds the R4.2 cache).
+Failure must be **seedable** so unit tests are deterministic and e2e tests reproducible. The pure
+fault logic lives in `core/domain` (architecture boundary); the worker handler wraps it with
+`asyncio.sleep` for latency — there is no separate `_sim.py`.
+reuse: composes D3 `split_blocks` + D4 `content_hash` (single source of truth per primitive).
+api: `random.Random(seed)` instance (NOT module-global `random`) for isolation; the handler adds
+  `asyncio.sleep` latency at call time.
 steps:
-  1. `async def sim_parse(text: str, *, rng: random.Random) -> None:` — sleep a small delay; if the
-     text matches the poison marker (e.g. contains `"__POISON__"`) raise a `PoisonError`
-     (non-retryable); else with prob `PARSE_FAILURE_RATE` raise a `TransientError` (retryable).
-  2. `async def sim_tts(text: str, *, rng: random.Random) -> bytes:` — sleep to model vendor latency;
-     return deterministic fake audio bytes (e.g. a header + hash) so stitch has something to concat.
-  3. Define `TransientError` and `PoisonError` here (or import from X7's taxonomy if built first).
-  4. Take the seed/rate from `get_settings()` defaults but allow override for tests.
+  1. `def simulate_parse(text, *, failure_rate=PARSE_FAILURE_RATE, rng=None) -> list[str]:` — if the
+     text contains the poison marker (`"__POISON__"`) raise `VendorError`; else with prob
+     `failure_rate` raise `VendorError`; on success return `split_blocks(text)` (D3).
+  2. `def tts_fake_audio(text) -> bytes:` — deterministic bytes keyed on `content_hash(text)` (D4) so
+     stitch has something to concat and the cache dedup works.
+  3. Define a SINGLE retryable exception `VendorError` here.
 MUST: be seedable — `rate=0.0` never fails, `rate=1.0` always fails, fixed seed reproducible,
   poison manuscript ALWAYS raises regardless of rate (deterministic DLQ trigger).
-MUST: distinguish transient (→retry ladder) from poison (→straight to DLQ) via the exception type (X7).
-MUST NOT: use module-global `random` (would bleed state across concurrent jobs) or real sleeps long
-  enough to slow the unit suite — keep sim latency tiny in tests.
+MUST: model poison as a **consistently-failing** input that exhausts the retry ladder → DLQ after 3
+  (SPEC §1) — the SAME retryable `VendorError` as a transient 500, NOT a separate non-retryable type.
+  (See docs/DECISIONS.md 2026-06-25 R2.0: SPEC overrides the earlier "PoisonError → straight to DLQ"
+  wording, which contradicted SPEC §1 and R3.3's "DLQ after 3 attempts".)
+MUST NOT: use module-global `random` (bleeds state across concurrent jobs); duplicate the D3/D4
+  primitives; add a fail-fast non-retryable path (out of spec).
 verify: [L2] `uv run pytest tests/unit -k fault_injection` — rate=0 never raises; rate=1 always raises
-  TransientError; poison always raises PoisonError; same seed → same sequence.
-accept: deterministic, seedable failure behavior; two exception classes drive retry vs DLQ.
-evidence:
+  `VendorError`; poison always raises `VendorError` (same type); same seed → same outcome; parse
+  returns D3 blocks; tts keyed on D4 hash.
+accept: deterministic, seedable failure behavior; single retryable class; primitives reused from D3/D4.
+evidence: uv run pytest tests/unit -k fault_injection -> green; vendor.py composes D3/D4; commit 0aff00f anchor.
 
 ---
 

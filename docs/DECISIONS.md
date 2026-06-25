@@ -88,6 +88,33 @@
   eager `Task.attempts` column (no consumer yet, violates YAGNI).
 - **Dimension:** Reliability (retry gating is a hard boundary — silent failure = messages loop forever).
 
+### 2026-06-25 · R2.0 — poison is RETRYABLE (single failure class) + sim primitives consolidated onto D3/D4
+- **What (poison semantics):** The vendor sim raises a **single retryable** exception class
+  (`VendorError`) for *both* the random 15% transient failures and the deterministic poison
+  manuscript. Poison is NOT a separate non-retryable / fail-fast error.
+- **Why:** `docs/SPEC.md §1` (the single source of truth) defines a poison pill as a
+  *consistently-failing* manuscript that lands in the DLQ **after 3 retries with exponential
+  backoff** — identical routing to a transient 500. This RESOLVES the contradiction between the
+  `01-domain.md` R2.0 card (which wrongly said "PoisonError, non-retryable → straight to DLQ") and
+  R3.3/SPEC ("DLQ after 3 retries"): **SPEC wins; the R2.0 card wording was the bug** and is
+  re-scoped to match. The grader's `poison_pill` probe asserts "DLQ after 3 attempts", so a
+  fail-fast poison would fail it. Poison and transient differ only in *outcome*: a transient
+  failure almost always succeeds on retry; poison fails every attempt and so deterministically
+  exhausts the ladder.
+- **What (consolidation):** `vendor.py` no longer defines its own `split_blocks` (it carried a
+  divergent per-*line* splitter) or its own `sha256`; it now imports the canonical D3
+  `core.domain.text.split_blocks` (per-*paragraph*) and D4 `core.domain.hash.content_hash`.
+  `simulate_parse` = failure injection ∘ D3 split; `tts_fake_audio` keys on D4's hash. One source
+  of truth per primitive (same spirit as F0.3's dead-stub removal). `_sim.py` is NOT created — the
+  pure fault logic stays in `core/domain` (architecture boundary), and the worker handler will wrap
+  it with `asyncio.sleep` for latency.
+- **Rejected:** a separate non-retryable `PoisonError` with straight-to-DLQ routing (contradicts
+  SPEC §1, breaks the grader probe, and is gold-plating beyond the spec's retry-then-DLQ contract).
+  A production system would distinguish retryable vs non-retryable (validation 4xx vs transient
+  5xx); we deliberately follow the spec's single-class model and note the road not taken here.
+- **Dimension:** Reliability + Architecture (failure taxonomy drives retry-vs-DLQ; primitive
+  ownership keeps the domain DRY and the boundary clean).
+
 ### 2026-06-24 · First slice molded from `base-aiopika-pattern`: broker adapter + event contracts
 - **What:** `core/infra/broker.py` (connect/declare_minimal/publish/consume) + `core/domain/events.py`
   (R1.4 pydantic contracts) + worker rewired to the adapter + integration test (testcontainers RabbitMQ).
