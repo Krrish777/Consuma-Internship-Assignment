@@ -230,3 +230,39 @@ async def test_cache_entry_expires_after_ttl(client: redis_infra.Redis) -> None:
 
     await asyncio.sleep(1.5)
     assert await cache.cache_get(h) is None  # expired -> rebuildable from MinIO
+
+
+# --- H8: cache-stampede in-flight lock ---------------------------------------
+
+
+async def test_only_one_caller_wins_the_inflight_lock(client: redis_infra.Redis) -> None:
+    cache = Cache(client, ttl=3600)
+    h = content_hash("a very popular block")
+
+    # 10 identical blocks race the in-flight lock simultaneously.
+    won = await asyncio.gather(*(cache.acquire_inflight(h, f"w{i}") for i in range(10)))
+    assert sum(won) == 1  # exactly one synthesiser
+
+
+async def test_stampede_yields_one_vendor_call_others_read_cache(
+    client: redis_infra.Redis,
+) -> None:
+    cache = Cache(client, ttl=3600)
+    h = content_hash("shared block under stampede")
+    url = "minio://audio/tts/shared.wav"
+
+    async def caller(owner: str) -> tuple[str, str | None]:
+        if await cache.acquire_inflight(h, owner):
+            await asyncio.sleep(0.2)  # simulate the one real vendor synthesis
+            await cache.cache_set(h, url)
+            await cache.release_inflight(h)
+            return ("synth", url)
+        # Loser: wait for the winner to populate the cache, then reuse it — no
+        # vendor call, and crucially no semaphore slot held while waiting.
+        return ("cached", await cache.wait_for_cache(h))
+
+    results = await asyncio.gather(*(caller(f"w{i}") for i in range(5)))
+
+    synths = [r for r in results if r[0] == "synth"]
+    assert len(synths) == 1  # exactly one vendor call for the whole burst
+    assert all(r[1] == url for r in results)  # everyone ends up with the same url

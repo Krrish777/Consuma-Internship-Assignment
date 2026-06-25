@@ -32,7 +32,9 @@ _log = get_logger(__name__)
 
 SLOTS_KEY = "tts:slots"
 CACHE_PREFIX = "tts:cache:"
+INFLIGHT_PREFIX = "tts:inflight:"
 DEFAULT_CACHE_TTL = 86_400  # 24h; MUST stay <= the MinIO object lifetime (H-DANGLE)
+DEFAULT_INFLIGHT_TTL = 60  # in-flight lock auto-expires if a synthesiser crashes
 
 
 def _as_str(value: bytes | str) -> str:
@@ -251,12 +253,22 @@ class Cache:
     <= the MinIO object lifetime so a HIT never returns a dangling key (H-DANGLE).
     """
 
-    def __init__(self, client: Redis, *, ttl: int = DEFAULT_CACHE_TTL) -> None:
+    def __init__(
+        self,
+        client: Redis,
+        *,
+        ttl: int = DEFAULT_CACHE_TTL,
+        inflight_ttl: int = DEFAULT_INFLIGHT_TTL,
+    ) -> None:
         self._client = client
         self.ttl = ttl
+        self.inflight_ttl = inflight_ttl
 
     def _key(self, content_hash: str) -> str:
         return f"{CACHE_PREFIX}{content_hash}"
+
+    def _inflight_key(self, content_hash: str) -> str:
+        return f"{INFLIGHT_PREFIX}{content_hash}"
 
     async def cache_get(self, content_hash: str) -> str | None:
         """Return the cached MinIO URL for this content hash, or None on a miss."""
@@ -270,3 +282,39 @@ class Cache:
         in redis-py 8 in favour of ``SET``'s ``ex=`` option (same atomic effect).
         """
         await self._client.set(self._key(content_hash), url, ex=self.ttl)
+
+    async def acquire_inflight(self, content_hash: str, owner: str) -> bool:
+        """Try to become the single synthesiser for this content hash (H8).
+
+        ``SET tts:inflight:<hash> owner NX EX`` — returns True only for the first
+        caller of a concurrent identical-block burst; that caller synthesises while
+        the losers (False) wait on :meth:`wait_for_cache`. The TTL bounds the lock so
+        a crashed synthesiser cannot wedge the burst forever.
+
+        MUST be checked WITHOUT holding a TTS semaphore slot — a waiter that held a
+        slot would starve the very synthesiser it is waiting on (pool deadlock).
+        """
+        won = await self._client.set(
+            self._inflight_key(content_hash), owner, nx=True, ex=self.inflight_ttl
+        )
+        return bool(won)
+
+    async def release_inflight(self, content_hash: str) -> None:
+        """Drop the in-flight lock after populating the cache (or let the TTL do it)."""
+        await self._client.delete(self._inflight_key(content_hash))
+
+    async def wait_for_cache(
+        self, content_hash: str, *, attempts: int = 100, poll: float = 0.1
+    ) -> str | None:
+        """Bounded wait for the winning synthesiser to populate the cache.
+
+        Polls :meth:`cache_get` up to ``attempts`` times. Returns the url once
+        present, or None if the budget elapses (caller may then retry the in-flight
+        race — e.g. if the original synthesiser crashed and its lock expired).
+        """
+        for _ in range(attempts):
+            url = await self.cache_get(content_hash)
+            if url is not None:
+                return url
+            await asyncio.sleep(poll)
+        return None
