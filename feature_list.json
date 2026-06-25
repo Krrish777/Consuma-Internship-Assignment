@@ -530,8 +530,8 @@
       "rung": 3,
       "behavior": "q.tts consumer prefetch sized near serviceable concurrency (semaphore size + small headroom), NOT the global PREFETCH=16, so a blocked BLPOP doesn't park 13+ unacked messages (crash blast radius + back-pressure). parse/stitch may keep the larger prefetch; document why.",
       "verification": ["[L1] config asserted in a unit test (prefetch_for q.tts <= TTS_CONCURRENCY+1 < PREFETCH); [L4] R3.1 bounded redelivery"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "Already implemented in W1 (worker/main.py prefetch_for + per-queue channels in register_consumers, since set_qos is channel-wide). [L1] uv run pytest tests/unit -k prefetch -> 2 passed: prefetch_for(q.tts)=TTS_CONCURRENCY+1=4 asserted <= TTS_CONCURRENCY+1 AND < global PREFETCH=16; prefetch_for(q.parse)==prefetch_for(q.stitch)==PREFETCH. [L4] uv run pytest -m e2e -k crash_recovery -> 1 passed in 315s against the live stack (bounded redelivery: job survives worker docker-kill and converges to COMPLETED; a small q.tts unacked backlog means a bounded crash blast radius). Closed the card's documentation step: prefetch_for docstring now explains WHY parse/stitch keep the larger prefetch (their handlers never block on a scarce leased resource — they run to completion once scheduled, so a deep prefetch only keeps the pipeline fed and parks nothing unacked; only q.tts gates on the global 3-slot semaphore, so only q.tts needs the small bound). make check green (106 unit, ruff+fmt clean, mypy). commit 700e587 base (uncommitted; user handles git)."
     }
   ]
 }

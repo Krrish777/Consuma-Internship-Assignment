@@ -4,10 +4,15 @@
 > Structured feature status lives in `feature_list.json` (see CLAUDE.md). Decisions: `docs/DECISIONS.md` + `docs/SPEC.md §4, §6`.
 
 ## Current State
-- Phase: **Phase 6 — L4 e2e probe suite COMPLETE** (docs/features/06-e2e.md fully exhausted).
-  Phases 0–5 complete.
-- Active card: **none** — all Phase-6 probes passing (T1, R3.1, R3.2, R3.3, R4.1, R4.2, R4.3, E-EDGE,
-  T-BEHAVIOR) + the R2.3 parse rung-row reconciled; WIP=0.
+- Phase: **Phase 7 — Infra verification & hygiene COMPLETE** (docs/features/07-infra.md fully exhausted).
+  Phases 0–6 complete.
+- Active card: **none** — all Phase-7 cards passing (I1, I2, I3, I4, H-DANGLE, H-PREFETCH); WIP=0.
+  check-wip.py + check-evidence.py exit 0.
+- **Phase 7 highlights:** hardened the MinIO healthcheck (`mc ready local`, first-party, :latest-robust)
+  and ADDED a missing gateway healthcheck (python3 urllib `/health`) so "all services healthy" is truthful;
+  added a guarded+bounded one-job e2e smoke to `init.sh` (which exposed the gateway-healthcheck race);
+  documented + L3-guarded the H-DANGLE object-lifetime invariant; re-confirmed I4 (scale=4 one semaphore)
+  and H-PREFETCH (q.tts prefetch bound + bounded crash redelivery via R3.1).
 - **L4 e2e: `uv run pytest -m e2e` → 14 passed in 78s** (single full-suite run against the live compose stack,
   no cross-test interference). Probes drive the REAL stack: POST to localhost:8000, poll /status, inject raw
   duplicate events on the broker, `docker kill`/`restart`/`--scale` containers under fault injection.
@@ -137,9 +142,26 @@
 - [x] T-BEHAVIOR — exact-bytes correctness + Postgres/MinIO consistency. `test_behavior.py`.
 - [x] R2.3 — parse-handler rung-row reconciled to passing (same L3 verify as W3).
 
+### Phase 7 — Infra verification & hygiene (all passing) — base 700e587
+- [x] I1 — `./init.sh` → all 6 services healthy, exit 0. MinIO healthcheck switched `curl /minio/health/live`
+      → first-party `mc ready local` (empirically curl+mc both ship today, but mc is :latest-robust + reports
+      cluster readiness). Gateway healthcheck added (see I3). `docker-compose.yml`.
+- [x] I2 — `docker compose build gateway worker` reproducible; both images include the `core` workspace member;
+      gateway serves `/health`, worker runs the real consume loop. Verified via image imports + runtime checks.
+- [x] I3 — `init.sh` e2e smoke: guarded (`INIT_SMOKE=0`), bounded (60s, fail-loud-not-hang) one-job
+      submit-and-poll → COMPLETED. Exposed + fixed a real race: gateway had NO compose healthcheck, so the
+      smoke POST raced the lifespan → added a python3 urllib `/health` healthcheck to the gateway service.
+- [x] I4 — `--scale worker=4` shares ONE global Redis semaphore (worker binds no host port). Re-ran the R4.1
+      probe (`LLEN tts:slots==3`, not 12). `test_semaphore.py`.
+- [x] H-DANGLE — object lifetime ≥ cache TTL: NO bucket lifecycle configured → `tts/` objects never expire.
+      Invariant documented in `storage.py`; L3 guard `test_tts_objects_never_expire_so_cache_hits_stay_live`
+      asserts `get_bucket_lifecycle` is None (fails if an expiring rule is ever added). DOC2 mention → Phase 8.
+- [x] H-PREFETCH — already implemented in W1 (`prefetch_for` q.tts = TTS_CONCURRENCY+1, not 16; per-queue
+      channels). [L1] prefetch unit test (2); [L4] R3.1 bounded redelivery re-confirmed; docstring now explains
+      why parse/stitch keep the larger prefetch (they never block on a scarce leased resource).
+
 ## In Progress
-- **none** — WIP=0. Phase 6 L4 e2e complete (all probes passing; 14 e2e green in one run). Next phase is
-  Phase 7 (infra verification) or Phase 8 (architecture-defense docs).
+- **none** — WIP=0. Phases 0–7 complete. Next (and final) phase is Phase 8 (architecture-defense docs).
 
 ## What's Genuinely Unbuilt (FEATURES.md scope)
 Phases 0–5 built (foundation, domain logic, Redis coordination, DB query layer, worker pipeline, gateway
@@ -150,20 +172,18 @@ run end-to-end at L3. Remaining:
   G8's `run_sweeper` was kept to re-publish only (every added line tested); folding retention into it is the
   documented optional follow-up. `reap()` belongs in the worker bootstrap, not the gateway sweeper.
 - Phase 6 L4 e2e/behavior probes: **DONE** (all passing; `uv run pytest -m e2e` → 14 passed).
-- Phase 7 Infra verification: I1–I4, H-DANGLE, H-PREFETCH (mostly verify + small fixes; I1/I3 partly satisfied
-  now that `./init.sh` brings up a working stack with the schema-on-boot fix).
+- Phase 7 Infra verification: **DONE** (I1–I4, H-DANGLE, H-PREFETCH all passing).
 - Phase 8 Architecture-defense docs: DOC1 (correct SPEC §4 + log the 7 corrections), DOC2 (`ARCHITECTURE.md`).
+  **This is the only remaining phase.**
 - **Resilience follow-up (found in Phase 6 E-EDGE):** a Redis bounce strands the TTS semaphore (Redis has no
   volume; `ensure_slots` is boot-only). Fix = re-seed on Redis-reconnect, or a periodic seed/reaper, or AOF.
 
 ## Next Steps
-1. **Phase 7 — Infra verification** (`07-infra.md`): I1 (`./init.sh` → 6 healthy, MinIO healthcheck), I2
-   (Dockerfiles build), I3 (init.sh e2e smoke — now feasible since schema-on-boot fixed ingestion), I4 (scale=4
-   shares one semaphore — already shown by R4.1), H-DANGLE (object TTL ≥ cache TTL), H-PREFETCH (re-confirm).
-2. **Phase 8 — Architecture-defense docs** (`08-docs.md`): DOC1 corrects SPEC §4 (7 corrections) + appends
+1. **Phase 8 — Architecture-defense docs** (`08-docs.md`): DOC1 corrects SPEC §4 (7 corrections) + appends
    DECISIONS; DOC2 = `ARCHITECTURE.md` defending each boundary + the four-seam transactional story, each claim
-   mapped to a passing Phase-6 probe (now that they exist). High rubric value, cheap to write.
-3. **Optional follow-ups:** the Redis-bounce semaphore re-seed (above); schedule `Semaphore.reap()` (worker
+   mapped to a passing Phase-6 probe and the Phase-7 infra cards. Include the H-DANGLE invariant (deferred from
+   H-DANGLE) and the Redis-bounce gap. High rubric value, cheap to write. **Last phase.**
+2. **Optional follow-ups:** the Redis-bounce semaphore re-seed (below); schedule `Semaphore.reap()` (worker
    bootstrap) + fold `purge_processed_events()` into `run_sweeper`.
 
 ## Known Issues / Gaps
@@ -174,6 +194,11 @@ run end-to-end at L3. Remaining:
 - **Deploy fixes (Phase 6):** `httpx>=0.27` added to `services/worker` deps (was crash-looping); gateway
   lifespan now runs idempotent `create_tables` on startup (compose Postgres had no schema; no real Alembic
   migration exists — `metadata.create_all` is the accepted simulation simplification). See DECISIONS "Phase 6".
+- **Healthcheck fixes (Phase 7):** MinIO healthcheck → `mc ready local` (first-party, :latest-robust vs the
+  prior `curl /minio/health/live` — both ship today but mc is the safer dependency). Gateway service GAINED a
+  healthcheck (python3 urllib `/health`) — previously it had none, so init.sh's wait + clients raced the
+  lifespan boot (surfaced by the I3 smoke). worker still has no healthcheck (no serving contract; its health is
+  proven by the e2e smoke job completing). See DECISIONS "Phase 7".
 - **Arch review 2026-06-24:** 13 hardening holes; full traces in `tmp/ARCH-REVIEW-2026-06-24.md` and `BACKLOG.md`. The FEATURES.md card spine folds every fix into its owning card — do NOT build without those constraints.
 - Worker pipeline body: **complete** (Phase 4). `worker/main.py` runs a real consume loop; `handlers/
   {parse,tts,stitch,dlq}.py` + `bootstrap.py`/`dispatch.py`/`errors.py`/`ssrf.py` are all wired and L3-tested.

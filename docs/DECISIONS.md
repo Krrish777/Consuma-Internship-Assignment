@@ -387,3 +387,44 @@ each card's evidence states its L3/L4 split explicitly (no level silently skippe
 - **Verified:** `uv run pytest -m e2e` -> **14 passed in 78s** (single full-suite run, no interference);
   `make check` green (ruff+fmt, mypy 70 files, 106 unit). New files: tests/e2e/{conftest,helpers}.py +
   8 probe modules. commit 700e587 base; all Phase-6 work uncommitted (user handles git).
+
+## 2026-06-25 · Phase 7 — Infra verification & hygiene (docs/features/07-infra.md, all 6 cards passing)
+Mostly verification of the authored harness on the live stack, with two real hygiene fixes the verification
+surfaced. WIP=1 throughout; check-wip.py + check-evidence.py exit 0.
+- **I1 MinIO healthcheck (`curl` -> `mc ready local`):** the card worried the image "may lack curl". Probed the
+  running `minio/minio:latest`: it ships BOTH `curl` 8.11.0 AND `mc`, and `curl -f /minio/health/live` returns
+  200 — so the prior check was technically compliant. Still switched to first-party **`mc ready local`** (CMD
+  form): `mc` is MinIO's own CLI, the binary MOST guaranteed to survive on the moving `:latest` tag (curl has
+  been trimmed from minio images before — exactly the card's MUST NOT), and `mc ready local` reports cluster
+  READINESS (ready to serve I/O), not just HTTP liveness. Verified: recreate minio -> healthy in 3s. Justified
+  hardening, not churn — the card itself names `mc ready` as the remedy.
+- **I3 surfaced a real race -> gateway healthcheck added:** init.sh's wait loop treats a service as ready when
+  Health is `healthy` OR EMPTY (= no healthcheck declared). The gateway had no healthcheck, so it was deemed
+  ready the instant its container started — and the new one-job smoke POST raced the lifespan (uvicorn + broker
+  connect + create_tables) -> `curl: (52) Empty reply`. Root-cause fix: gave the gateway a **python3 urllib
+  `/health`** healthcheck (no curl/wget in bookworm-slim; python3 IS the runtime — same MUST as the minio fix),
+  so "all services healthy" truly waits for the lifespan. This also retroactively makes I1 honest (the gateway
+  is now actually health-gated). worker keeps no healthcheck deliberately: it has no serving contract, and its
+  health is proven by the e2e smoke job reaching COMPLETED (which requires it to consume).
+- **I3 smoke design:** guarded (`INIT_SMOKE=0` skips) + bounded (60s poll cap; FAILED or timeout -> exit 1).
+  Failing init.sh loud-and-fast beats hanging the bring-up; the unit suite already passed, so a smoke failure
+  means the *wired* stack is broken — worth surfacing. Dependency-free parsing (grep+sed, not jq — init.sh only
+  assumes docker+uv).
+- **I2 / I4 verification:** `docker compose build gateway worker` reproducible; `core` workspace member present
+  in both images (import check); worker logs the real consume loop. I4 = the deployment-shape owner for R4.1's
+  `--scale worker=4` shares-one-semaphore probe (worker binds no host port); re-ran it green (LLEN==3 not 12).
+- **H-DANGLE — object lifetime >= cache TTL, chosen policy = never expire `tts/`:** the deployment installs NO
+  bucket lifecycle, so objects never expire and trivially outlive any `tts:cache:<hash>` entry (no dangling-key
+  404 window). Documented the invariant in `storage.py`; the L3 guard asserts `get_bucket_lifecycle(BUCKET) is
+  None` (the card's offered alternative to a literal 1-day-boundary wait) — it fails if anyone later adds an
+  expiring rule. ARCHITECTURE.md (DOC2) mention deferred to the Phase-8 DOC2 card.
+- **H-PREFETCH:** already implemented in W1 (`prefetch_for` q.tts = TTS_CONCURRENCY+1, per-queue channels since
+  `set_qos` is channel-wide). Verified [L1] (prefetch unit test) + [L4] (R3.1 bounded redelivery, 315s green).
+  Closed the doc step: parse/stitch keep the larger global prefetch because their handlers never block on a
+  scarce leased resource (they run to completion once scheduled, parking nothing unacked); only q.tts gates on
+  the global 3-slot semaphore, so only q.tts needs the small bound.
+- **Verified:** `make check` green (ruff+fmt, mypy, 106 unit incl. 2 prefetch); `init.sh` -> 6 healthy + 106
+  unit + one-job smoke COMPLETED, exit 0; e2e semaphore + crash_recovery + storage(6, incl H-DANGLE) green.
+  Changed files: docker-compose.yml (minio+gateway healthchecks), init.sh (smoke), storage.py (H-DANGLE doc),
+  worker/main.py (prefetch doc), tests/integration/test_storage.py (+1). commit 700e587 base; uncommitted
+  (user handles git).
