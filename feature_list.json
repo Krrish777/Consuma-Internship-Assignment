@@ -338,23 +338,23 @@
       "rung": 2,
       "behavior": "Parse handler / fan-out emitter (BOM 08-W3 ⭐): consume JobCreated, load manuscript from MinIO, sim_parse (transient/poison), split_blocks (D3); if 0 blocks -> CAS job straight to STITCHING (+publish StitchReady) and return (fan-in of 0 must not hang); else in ONE tx INSERT N Task rows (ON CONFLICT DO NOTHING on job_id+block_index) and begin_parse CAS sets pending_count=N only on first run (H15); ALWAYS re-publish all N TtsRequested (redelivery that finds rows still emits events, H2); advance PARSING->GENERATING; ack last. Cap block count at MAX_BLOCKS (H14). NEVER inbox-skip parse.",
       "verification": ["uv run pytest tests/integration -k 'parse_fanout or zero_block_terminates' (N blocks -> N tasks + pending_count=N + N TtsRequested; redelivered JobCreated -> still N tasks, counter unchanged, events re-published; 0-block -> STITCHING/terminal)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k parse -> 5 passed (test_parse_fanout: 3 blocks -> 3 tasks + pending_count=3 + status GENERATING + 3 TtsRequested whose task_ids match the rows; test_parse_redelivery_is_idempotent: 2nd delivery -> still 2 tasks, counter still 2, events re-published; test_zero_block_terminates: whitespace manuscript -> 0 tasks, pending_count=0, status GENERATING, 1 StitchReady, 0 TtsRequested; test_parse_caps_blocks_at_max: MAX_BLOCKS=2 caps 4 blocks -> 2) against real pg+rmq+redis+minio. handle_parse in worker/handlers/parse.py: ON CONFLICT task inserts + begin_parse (H15, one tx) -> advance_status GENERATING -> ALWAYS re-publish (H2); deterministic task_id=job_id-i; 0-block emits StitchReady (FSM-legal realisation of 'straight to STITCHING'). advance_status CAS helper added to core/infra/queries.py. Live crash/poison-DLQ is Phase-6 R3.x; here L3. full gate: ruff+fmt clean, mypy 56 files 0 errors, pytest tests/unit 97 passed; commit f62825c HEAD anchor (user handles git)"
     },
     {
       "id": "W4",
       "rung": 4,
       "behavior": "TTS handler / cache->slot->generate->fan-in (BOM 08-W4 ⭐): for each TtsRequested compute content_hash(text); cache_get BEFORE acquiring a semaphore slot (a hit burns NO token, SPEC §4); on miss acquire leased Redis slot (R2/X5, never asyncio.Semaphore) -> tts_fake_audio -> put_bytes tts/<hash>.wav -> cache_set -> release; then complete_task_and_decrement (B4 atomic claim+decrement); if remaining==0 publish StitchReady. H-EMIT: on redelivery where the claim no-ops, re-read pending_count and re-emit StitchReady if 0 (covers crash-after-decrement-before-publish). Ack last.",
       "verification": ["uv run pytest tests/integration -k 'tts_cache or tts_fan_in or tts_emit' (identical block -> one synth + no 2nd slot; N tasks -> exactly one StitchReady; redelivery after barrier crossed -> re-emits StitchReady)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k test_tts -> 3 passed (tts_fan_in: 3 tasks -> exactly one StitchReady, all DONE w/ audio_key, objects in MinIO; tts_cache: two identical blocks -> tts_fake_audio called exactly once, 2nd is cache hit; tts_emit/H-EMIT: redeliver already-DONE task after barrier crossed -> re-emits StitchReady) against real pg+rmq+redis+minio. handle_tts in worker/handlers/tts.py: reconstruct block text via block_index -> content_hash -> cache_get BEFORE semaphore slot (hit burns no token) -> H8 in-flight lock without slot -> leased slot synth -> put_bytes -> cache_set -> complete_task_and_decrement (B4) -> StitchReady on 0; H-EMIT re-reads pending_count on None. Live cache/fan_in/crash e2e is Phase-6 R4.2/R3.x; here L3. full gate: ruff+fmt clean, mypy 58 files 0 errors, pytest tests/unit 97 passed; commit f62825c HEAD anchor (user handles git)"
     },
     {
       "id": "W7",
       "rung": 3,
       "behavior": "DLQ -> fan-in resolver (BOM 08-W7, H4): a consumer on q.dlq resolves the fan-in barrier for a poisoned TTS task so the job never stalls forever in GENERATING. Policy (recommended, documented in DOC1): mark that task FAILED and still decrement the barrier (stitch later skips FAILED blocks) so the job can reach STITCHING; if the decrement reaches 0, emit StitchReady. Stays OFF the hot queue (consumes q.dlq) so healthy q.tts traffic is unaffected (no HOL). Never silently drop a DLQ message without touching the barrier.",
       "verification": ["uv run pytest tests/integration -k dlq_resolver (poisoned TTS task on q.dlq -> task FAILED + barrier decremented; reaching 0 emits StitchReady; healthy traffic untouched)"],
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": ""
     },
     {
