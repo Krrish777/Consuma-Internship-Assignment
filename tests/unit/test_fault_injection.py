@@ -98,7 +98,7 @@ def test_clean_text_rate_zero_returns_blocks() -> None:
 
 
 def test_simulate_parse_returns_d3_paragraph_blocks() -> None:
-    # Delegates to D3 split_blocks: blank-line paragraphs, soft newlines kept.
+    # Delegates to split_blocks: blank-line paragraphs, soft newlines kept.
     text = "Para one\nstill one\n\nPara two"
     assert simulate_parse(text, failure_rate=0.0) == ["Para one\nstill one", "Para two"]
 
@@ -114,6 +114,6 @@ def test_tts_fake_audio_different_text_different_bytes() -> None:
 
 
 def test_tts_fake_audio_keyed_on_d4_content_hash() -> None:
-    # Proves the fake audio is derived from the canonical D4 hasher, so the bytes
-    # and the R4.2 cache key (tts/<hash>.wav) stay in lockstep.
+    # Proves the fake audio is derived from the canonical hasher, so the bytes
+    # and the cache key (tts/<hash>.wav) stay in lockstep.
     assert tts_fake_audio("hello") == b"FAKE_AUDIO:" + content_hash("hello").encode("ascii")

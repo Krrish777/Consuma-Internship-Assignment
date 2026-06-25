@@ -1,4 +1,4 @@
-"""R2.2b — Gateway pydantic schema unit tests (no Docker required)."""
+"""Gateway pydantic schema unit tests (no Docker required)."""
 
 from __future__ import annotations
 

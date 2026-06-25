@@ -1,5 +1,5 @@
-"""T-BEHAVIOR — functional correctness (L4): a real manuscript yields a correct,
-cross-store-consistent produced asset (SPEC DoD gate #5 — not just status==COMPLETED).
+"""Functional correctness: a real manuscript yields a correct,
+cross-store-consistent produced asset (not just status==COMPLETED).
 
 The sim's fake audio is deterministic — ``tts_fake_audio(text) = b"FAKE_AUDIO:" +
 content_hash(text)`` — so the exact bytes of ``out/<job>.mp3`` are predictable: the

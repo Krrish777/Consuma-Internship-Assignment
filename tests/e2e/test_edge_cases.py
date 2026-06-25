@@ -1,4 +1,4 @@
-"""E-EDGE — edge-case battery (L4): the corners SPEC §3 calls out must converge.
+"""Edge-case battery: the corners the spec calls out must converge.
 
 Covered here (deterministic, hermetic):
   1. 0-block manuscript     → terminates (fan-in barrier of 0 must not hang).
@@ -7,17 +7,17 @@ Covered here (deterministic, hermetic):
                               reuses the same content-addressed assets (cache served).
   4. dependency bounce      → restart MinIO around a job; the retry ladder rides out
                               the outage (MinIO is persistent) and the job converges.
-  5. Redis wipe (H1)        → FLUSHALL Redis, then a NEW job still reaches COMPLETED:
+  5. Redis wipe             → FLUSHALL Redis, then a NEW job still reaches COMPLETED:
                               the worker's periodic re-seeder (run_reseeder) rebuilds
                               the wiped TTS pool, so acquire() no longer BLPOPs forever.
 
 Covered elsewhere (honest split, to avoid duplicate/over-destructive probes):
-  * parse-crash-after-writing-some-rows → no duplicate tasks: proven by R3.2's
-    duplicate-JobCreated probe (parse ON CONFLICT DO NOTHING) + L3 test_parse_redelivery.
+  * parse-crash-after-writing-some-rows → no duplicate tasks: proven by the
+    duplicate-JobCreated probe (parse ON CONFLICT DO NOTHING) + test_parse_redelivery.
 
 History: the Redis-wipe case was previously NOT exercised — ``ensure_slots`` ran only
 on worker boot, so a wipe stranded the TTS semaphore (BLPOP on an empty pool) until a
-worker reboot. H1 (run_reseeder) closed that gap, which is what case 5 now proves.
+worker reboot. The re-seeder (run_reseeder) closed that gap, which is what case 5 now proves.
 """
 
 from __future__ import annotations
@@ -130,9 +130,9 @@ async def test_redis_wipe_job_still_completes(
     client: httpx.AsyncClient,
     wait_for_status: Callable[..., Awaitable[str]],
 ) -> None:
-    # H1: Redis is "safe to lose" — a wipe must self-heal. Warm the stack, FLUSHALL
+    # Redis is "safe to lose" — a wipe must self-heal. Warm the stack, FLUSHALL
     # Redis (drops tts:slots + its init marker, as an eviction/restart would), confirm
-    # the pool is genuinely empty, then submit a NEW multi-block job. Before H1 this
+    # the pool is genuinely empty, then submit a NEW multi-block job. Previously this
     # would hang forever (acquire() BLPOPs an empty pool that boot-only ensure_slots
     # never refills); with the periodic run_reseeder it re-seeds and the job converges.
     warm = await client.post("/jobs", json={"manuscript": "Warm up the pool."})

@@ -1,9 +1,9 @@
-"""X1 — worker run loop (L2, pure; no Docker).
+"""Worker run loop (L2, pure; no Docker).
 
 Proves the two load-bearing, OS-independent pieces of the run loop:
   - a shutdown signal sets the drain event (run() then closes cleanly), and
   - register_consumers wires a consumer for each of the three pipeline queues.
-The live signal/redelivery path is covered by the Phase-6 R3.1 e2e (docker kill).
+The live signal/redelivery path is covered by the Phase-6 e2e (docker kill).
 """
 
 from __future__ import annotations
