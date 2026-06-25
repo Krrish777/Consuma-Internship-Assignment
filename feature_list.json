@@ -186,8 +186,18 @@
       "verification": [
         "uv run pytest tests/unit -k hash (same text->same hash; different text->different; 64-char lowercase hex; known vectors for fixed strings)"
       ],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k hash -> 12 passed (known vectors for '' and 'hello world', determinism, distinctness, 64-char lowercase hex, whitespace-significant, utf-8 non-ASCII, parametrized idempotency); full gate: ruff+fmt clean, mypy 43 files 0 errors, pytest tests/unit 80 passed; commit 0aff00f HEAD anchor (user handles git)"
+    },
+    {
+      "id": "H-FSM",
+      "rung": 1,
+      "behavior": "Compare-and-set transition contract (BOM 02-D2, hardens R1.2 state.py): document in state.py that status writes MUST go through CAS (UPDATE jobs SET status=:next WHERE job_id=:id AND status IN (:expected)) not read-then-write, and that a rowcount-0 CAS is a NORMAL concurrent outcome ('someone else advanced it'), NOT an error — handlers treat it as already-advanced and proceed idempotently. Add pure helper expected_for(next) -> set[JobStatus] returning legal predecessors so handlers build the WHERE guard from one source of truth. MUST stay I/O-free (no SQLAlchemy in domain; the SQL lives in the Phase 3/4 handler).",
+      "verification": [
+        "uv run pytest tests/unit -k 'state_machine or fsm' (existing transitions still green + expected_for predecessors correct, terminal states have no predecessors, inverse of can_transition)"
+      ],
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k 'state_machine or fsm' -> 12 passed (8 original transition tests still green + 4 new: forward-path predecessors, FAILED=all-non-terminal, PENDING no-predecessors, exact-inverse-of-can_transition property); CAS contract + rowcount-0-is-normal documented in state.py docstring; domain stays I/O-free (test_architecture green); full gate: ruff+fmt clean, mypy 43 files 0 errors, pytest tests/unit 84 passed; commit 0aff00f HEAD anchor (user handles git)"
     },
     {
       "id": "R2.3",

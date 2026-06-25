@@ -4,10 +4,11 @@
 > Structured feature status lives in `feature_list.json` (see CLAUDE.md). Decisions: `docs/DECISIONS.md` + `docs/SPEC.md §4, §6`.
 
 ## Current State
-- Phase: **Phase 0 — Foundation & reconciliation** (FEATURES.md / docs/features/00-foundation.md).
-- Active card: **F0.1** (reconcile stale feature_list.json + refresh PROGRESS.md).
-- `make check` (L1 static + L2 unit): **GREEN** — ruff + mypy --strict (38 files) + 37 unit tests.
-- Integration tests: fixed conftest.py Ryuk issue (set `TESTCONTAINERS_RYUK_DISABLED=true`); rerun pending.
+- Phase: **Phase 1 — Domain pure logic** (FEATURES.md / docs/features/01-domain.md). Phase 0 complete.
+- Active card: **none** — D3, D4, H-FSM all earned `passing`; WIP=0.
+- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (43 files) + 84 unit tests.
+- Integration tests: conftest.py Ryuk fix in place (`TESTCONTAINERS_RYUK_DISABLED=true`); not re-run this session (pure-domain cards only, no Docker needed).
+- **Open decision:** R2.0 divergence — see Known Issues. The fault-injection card (01-domain.md R2.0) specs `services/worker/handlers/_sim.py` with async `sim_parse`/`sim_tts` and a `TransientError`/`PoisonError` taxonomy; what exists is the synchronous `core/domain/vendor.py` with a single `VendorError`. R2.0 is marked `passing` against vendor.py. Needs a user call before Phase 4.
 
 ## Completed (all earning `passing` in feature_list.json)
 
@@ -35,6 +36,17 @@
 - [x] R2.2 — Ingestion: POST /jobs → MinIO → PG PENDING + COMMIT → publish JobCreated → 202 (commit 61d73fe)
 - [x] R2.2d — Status: GET /status/{job_id} → job status; unknown id → 404 (commit 61d73fe)
 
+### Phase 0 — Foundation reconciliation (all passing)
+- [x] F0.1 — Tracker reconciled + Ryuk fix + ruff format fix (anchor ed6693e)
+- [x] F0.2 — 9 config knobs + retry_delays/webhook_allowlist property accessors (anchor ed6693e)
+- [x] F0.3 — Deleted dead domain/models.py (0 imports) (anchor ed6693e)
+- [x] F0.4 — DECISIONS.md H-XDEATH entry: x-retry-count is authority, Task.attempts deferred (anchor ed6693e)
+
+### Phase 1 — Domain pure logic (all passing; L2-only, no Docker)
+- [x] D3 — `core/domain/text.py` `split_blocks()`: blank-line paragraph splitter; 0-block path → [] (anchor 0aff00f)
+- [x] D4 — `core/domain/hash.py` `content_hash()`: canonical sha256(text) hex; cache/idempotency key (anchor 0aff00f)
+- [x] H-FSM — `core/domain/state.py`: CAS contract doc (rowcount-0 = normal) + `expected_for()` predecessor helper (anchor 0aff00f)
+
 ### Tests (43 unit + integration)
 - `tests/unit/` — 37 tests (architecture, error_handlers, events, health, logging, schemas, smoke, state_machine)
 - `tests/integration/test_ingestion.py` — 7 tests (lifespan, POST /jobs ×4, GET /status ×2)
@@ -43,14 +55,10 @@
 - `tests/integration/test_storage.py` — MinIO: idempotent bucket, text/bytes roundtrip, list_prefix, key_exists
 
 ## In Progress
-- **F0.1** — reconcile feature_list.json + refresh PROGRESS.md (this card)
-  - R2.0 corrected back to `not_started` (was erroneously left `in_progress`)
-  - conftest.py Ryuk fix applied
-  - Awaiting integration test green + commit hash to earn `passing`
+- **none** — WIP=0. Phase 1 domain cards complete. Next pick is the R2.0 decision (below) or Phase 2 Redis.
 
 ## What's Genuinely Unbuilt (FEATURES.md scope)
-The entire Phase 1–8 roadmap is unbuilt:
-- Phase 1 Domain pure logic: fault injection (R2.0), text parser (D3/D4), FSM hardening (H-FSM)
+Phase 1 domain logic is now built (D3/D4/H-FSM; R2.0 partial — see Known Issues). Remaining:
 - Phase 2 Redis coordination: semaphore (R4.1), content cache (R4.2), idempotency inbox (R3.2)
 - Phase 3 DB query layer: fan-in atomic UPDATE (B4), sweeper counter (H15), stats queries (B6)
 - Phase 4 Worker pipeline: parse/TTS/stitch handlers (X1–X7, W1–W7) — broker topology exists but handlers are stubs
@@ -59,15 +67,24 @@ The entire Phase 1–8 roadmap is unbuilt:
 - Phase 7 Infra verification: I1–I4, H-DANGLE, H-PREFETCH
 - Phase 8 Architecture-defense docs: DOC1, DOC2
 
-## Next Steps (after F0.1 earns passing)
-1. **F0.2** — Add missing config knobs (MAX_MANUSCRIPT_BYTES, MAX_BLOCKS, WEBHOOK_ALLOWLIST, LEASE_TTL_S, CACHE_TTL_S, PROCESSED_EVENTS_RETENTION_S, SWEEP_INTERVAL_S, PENDING_TIMEOUT_S) to core/config.py.
-2. **F0.3** — Remove dead domain/models.py stub.
-3. **F0.4** — Document retry-counter source-of-truth decision (H-XDEATH) in DECISIONS.md.
-4. Then Phase 1: R2.0 (fault injection) → D3/D4 (text parser) → H-FSM (FSM CAS hardening).
+## Next Steps
+1. **Resolve R2.0 divergence** (user decision — see Known Issues). Either: (a) keep vendor.py as the
+   canonical sim and re-scope the 01-domain.md R2.0 card to match it; or (b) build the card as written
+   (`worker/handlers/_sim.py`, async `sim_parse`/`sim_tts`, `TransientError`/`PoisonError` split) and
+   demote vendor.py. The exception taxonomy choice drives retry-vs-DLQ routing in Phase 4, so settle it
+   before the parse/tts handlers (R2.3/R4.x). NB apparent spec tension: R2.0 says poison is non-retryable
+   (→ straight to DLQ) while R3.3 says poison dead-letters *after 3 retries* — reconcile when deciding.
+2. **Phase 2 — Redis coordination** (docs/features/02-redis.md): semaphore (R4.1), content cache (R4.2),
+   idempotency inbox (R3.2). First card needs `core/infra/redis.py` (does not exist yet).
 
 ## Known Issues / Gaps
 - **Arch review 2026-06-24:** 13 hardening holes; full traces in `tmp/ARCH-REVIEW-2026-06-24.md` and `BACKLOG.md`. The FEATURES.md card spine folds every fix into its owning card — do NOT build without those constraints.
-- Worker pipeline body: worker/main.py is an idle skeleton (connects + idles); no message handlers yet.
+- Worker pipeline body: worker/main.py is an idle skeleton; handlers/{parse,tts,stitch}.py are STUBS
+  (docstring-only, no logic wired). No `_sim.py` exists.
+- **R2.0 divergence (open):** 01-domain.md R2.0 specs `worker/handlers/_sim.py` (async `sim_parse`/`sim_tts`,
+  `TransientError`/`PoisonError` taxonomy). Actual impl is `core/domain/vendor.py` (sync, single `VendorError`,
+  12 tests). vendor.py is purer (domain-layer, no asyncio) but lacks the two-exception split that drives
+  retry-vs-DLQ routing. R2.0 is marked `passing` against vendor.py. See Next Steps #1.
 - `core/infra/redis.py`: does not exist yet (Phase 2 scope).
-- `domain/text.py`: does not exist yet (Phase 1 / D3-D4 scope).
-- `domain/models.py`: dead stub (F0.3 removes it).
+- `domain/text.py`, `domain/hash.py`: now exist (D3/D4 done).
+- `domain/models.py`: removed (F0.3).
