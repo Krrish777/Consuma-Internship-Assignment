@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain.state import JobStatus, can_transition
+from core.domain.state import JobStatus, can_transition, expected_for
 
 
 def test_legal_forward_path() -> None:
@@ -60,3 +60,35 @@ def test_backwards_transitions_illegal() -> None:
 )
 def test_skip_transitions_from_pending_illegal(skip_to: JobStatus) -> None:
     assert not can_transition(JobStatus.PENDING, skip_to)
+
+
+# --- H-FSM: expected_for (legal predecessors → the CAS WHERE guard) ---
+
+
+def test_expected_for_forward_path_predecessors() -> None:
+    assert expected_for(JobStatus.PARSING) == {JobStatus.PENDING}
+    assert expected_for(JobStatus.GENERATING) == {JobStatus.PARSING}
+    assert expected_for(JobStatus.STITCHING) == {JobStatus.GENERATING}
+    assert expected_for(JobStatus.COMPLETED) == {JobStatus.STITCHING}
+
+
+def test_expected_for_failed_is_every_non_terminal() -> None:
+    assert expected_for(JobStatus.FAILED) == {
+        JobStatus.PENDING,
+        JobStatus.PARSING,
+        JobStatus.GENERATING,
+        JobStatus.STITCHING,
+    }
+
+
+def test_expected_for_pending_has_no_predecessors() -> None:
+    # PENDING is the initial state — nothing transitions INTO it.
+    assert expected_for(JobStatus.PENDING) == set()
+
+
+def test_expected_for_is_exact_inverse_of_can_transition() -> None:
+    # The CAS guard derived from expected_for must match the pure predicate
+    # for every (current, next) pair — one source of truth, no drift.
+    for current in JobStatus:
+        for next_status in JobStatus:
+            assert (current in expected_for(next_status)) == can_transition(current, next_status)
