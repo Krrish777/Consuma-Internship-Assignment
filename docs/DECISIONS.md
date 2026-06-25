@@ -211,3 +211,64 @@ The atomic query operations the worker handlers will call now live in `core/infr
 - **Verified:** `make check` green (ruff + ruff format + mypy --strict 45 files + 82 unit); integration
   `-k models` → 13 passed (6 pre-existing + 3 B4 fan_in + 3 H15 counter_once + 1 B6 stats). Anchor commit
   b891a95 (user handles git).
+
+## 2026-06-25 · Phase 4 worker pipeline complete (X1/X2/X3/W1/W2/W3/W4/W5/W5b/W7/X7/H-SSRF)
+
+The whole worker engine — bootstrap → dispatch → run loop → ack-last skeleton → the three pipeline
+handlers + the DLQ resolver + the SSRF guard. All 12 BOM cards in `docs/features/04-worker.md` earned
+`passing` via TDD; handler cards verified at **L3** against real postgres+rabbitmq+redis+minio containers.
+The genuinely-L4 probes (docker kill mid-job, live poison→DLQ) stay with their Phase-6 `R3.x` owners;
+each card's evidence states its L3/L4 split explicitly (no level silently skipped).
+
+- **X3 bootstrap — `build_context(settings=None)`.** Card says "wire from `get_settings()`"; made settings
+  an injectable default so the context is testable against ephemeral containers (DI at the seam). `ensure_slots`
+  (X4) + `configure_logging` run once here. `close_context` tears down broker→engine→redis.
+- **X2 dispatch built before its handlers (DAG order).** The table wires `make_{parse,tts,stitch}_handler`
+  factories; their bodies are filled by W3/W4/W5. Intermediate factory bodies were **loud
+  `NotImplementedError`** placeholders, never silent ack-drops. The DLQ consumer (W7) is wired in `run()`
+  (off the hot queue), NOT in `build_handlers`, so the X2 table contract (exactly 3 pipeline queues) holds.
+- **W1 per-queue prefetch needs per-queue channels.** `set_qos` is channel-wide, so q.tts gets its own
+  channel sized to `TTS_CONCURRENCY+1` (H-PREFETCH) while q.parse/q.stitch keep the global PREFETCH=16.
+- **X7 reconciled with R2.0.** `PoisonError` (immediate DLQ) is reserved for *structurally unprocessable*
+  messages; the consistently-failing **manuscript** stays the retryable `VendorError` (ladder-then-DLQ per
+  SPEC §1), as R2.0 settled. Unknown exceptions are treated as transient (fail-safe — never ack-drop a bug).
+- **W2 ack-last (⭐).** `async with message.process(ignore_processed=True)` + an explicit terminal `ack` on
+  every path. Immediate-DLQ-on-poison reuses `route_retry_or_dlq(max_retries=0)` — no new broker code.
+- **W3 parse (⭐).** Deterministic `task_id = f"{job_id}-{i}"` makes redelivery safe (re-published events
+  always reference existing rows). Task `INSERT … ON CONFLICT` + `begin_parse` share ONE commit (atomic
+  rows+counter). **0-block → emit `StitchReady` now** (barrier already 0): the FSM-legal realisation of the
+  card's "straight to STITCHING" (a direct PENDING→STITCHING jump is illegal). `MAX_BLOCKS` cap logs what it drops.
+- **W4 tts (⭐).** Block text reconstructed from the manuscript via `block_index` (message/row carry only the
+  hash). `cache_get` **before** the semaphore slot (a hit burns no token); H8 in-flight lock taken **without**
+  a slot. Fan-in via B4; **H-EMIT** re-emits `StitchReady` on a redelivery where the claim no-ops but the
+  barrier is already 0 (crash-after-decrement-before-publish).
+- **W7 DLQ resolver (H4) — POLICY DECISION.** Recommended policy implemented: a poisoned **TTS** block is
+  marked `FAILED` and the barrier is still decremented (`fail_task_and_decrement`), so the job converges as a
+  **partial drama** (stitch skips FAILED blocks); reaching 0 emits `StitchReady`. A parse/stitch poison (no
+  `task_id`) hard-fails the whole job. *Alternative (hard-fail the whole job on any poison) is a one-line
+  swap.* Routed by event-body shape since `JobCreated`/`StitchReady` are field-identical. Consumer manages its
+  own ack/nack (NOT `ack_last` — q.dlq has no retry ladder); never silently drops without touching the barrier.
+  **Known edge:** `complete_task_and_decrement` still guards only `status != 'DONE'`, so a DLQ-failed task
+  followed by a late TTS *success* could double-decrement (→ pending_count -1, harmless: StitchReady already
+  fired). The realistic flow can't hit it (a DLQ'd task already failed 3×, so it never called `complete`).
+  Left B4 untouched rather than refactor a passing card mid-phase; `fail_task_and_decrement` guards both
+  terminal states.
+- **W5 stitch.** Chunk order comes from the **DB** (`Task WHERE DONE ORDER BY block_index`), not a MinIO
+  prefix — storage is content-addressed (`tts/<hash>.wav`), so a prefix can't identify/order a job's chunks.
+  **Client-side concat** (download-join-put), NOT `compose_object` (which requires ≥5 MiB parts). Idempotent:
+  short-circuit if already COMPLETED (H5); `finalize_job` CAS STITCHING→COMPLETED stamps `final_key`; only the
+  CAS winner fires the webhook.
+- **H-SSRF.** `is_allowed` resolves and checks **every** A/AAAA record (DNS rebinding) — rejects
+  private/loopback/link-local/reserved/multicast/unspecified — and enforces the allowlist. Unit-tested with
+  `getaddrinfo` mocked (no network).
+- **W5b webhook.** Empty allowlist = **log-only** (explicit check, distinct from is_allowed's IP logic); else
+  H-SSRF guard → `httpx.post(follow_redirects=False, timeout)`. Runs *after* finalize, outside the handler's
+  raise-path (never on the retry ladder); every failure logged and swallowed — the job stays COMPLETED (MUST #8).
+- **New `core/infra/queries.py` helpers (handlers call, domain stays pure):** `advance_status` (generic
+  FSM-CAS via `expected_for`), `fail_task_and_decrement` (W7), `finalize_job` (W5). All honour the H-FSM
+  rowcount-0-is-normal contract.
+- **Test architecture:** `tests/integration/conftest.py` brings up all four containers ONCE per session
+  (`worker_stack` → one wired `Settings`); each handler test builds a fresh `WorkerContext` per test in its own
+  event loop and overrides `PARSE_FAILURE_RATE=0.0` for determinism (the 15% failure path is unit-covered).
+- **Verified:** `make check` green (ruff + ruff format + mypy --strict 64 files + 106 unit); integration L3 per
+  card all green (bootstrap 2, parse 5, tts 3, dlq 3, stitch 3, webhook 3). Anchor commit f62825c (user handles git).

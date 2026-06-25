@@ -4,13 +4,21 @@
 > Structured feature status lives in `feature_list.json` (see CLAUDE.md). Decisions: `docs/DECISIONS.md` + `docs/SPEC.md §4, §6`.
 
 ## Current State
-- Phase: **Phase 3 — DB query layer COMPLETE** (docs/features/03-db-queries.md fully exhausted).
-  Phases 0–2 complete.
-- Active card: **none** — all 3 DB BOM cards (B4, H15, B6) `passing`; WIP=0. (Phase 2: R1/R2/X4/X5/R3/H8/R4inbox.)
-- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (45 files) + 82 unit tests.
-- Integration tests: **RE-RUN this session with Docker up** — `pytest tests/integration -k models`
-  → 13 passed (real postgres:17-alpine; Ryuk disabled via conftest.py). The 7 new query-layer tests
-  (3 B4 fan_in + 3 H15 counter_once + 1 B6 stats) are L3 and gate the Phase-3 cards' `passing` state.
+- Phase: **Phase 4 — Worker pipeline COMPLETE** (docs/features/04-worker.md fully exhausted).
+  Phases 0–3 complete.
+- Active card: **none** — all 12 worker BOM cards (X1/X2/X3/W1/W2/W3/W4/W5/W5b/W7/X7/H-SSRF) `passing`; WIP=0.
+- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (64 files) + 106 unit tests.
+- Integration tests (Docker up, real pg+rmq+redis+minio): per-card L3 all green —
+  worker_bootstrap 2, parse 5, tts 3, dlq_resolver 3, stitch 3, webhook 3 (+ pre-existing models/broker/
+  storage/redis/topology/ingestion). New `tests/integration/conftest.py` starts all four containers once
+  per session (`worker_stack`) and builds a fresh `WorkerContext` per test.
+- **Phase-4 L3/L4 split:** handler logic is verified at L3 (direct handler invocation against real
+  containers). The genuinely-L4 probes (docker kill mid-job → redeliver; live poison → DLQ-after-3) stay
+  with their Phase-6 `R3.x` owners; each card's evidence states the split (no required level silently skipped).
+- **Phase 4 design notes** (docs/DECISIONS.md 2026-06-25 "Phase 4"): ack-last via `process(ignore_processed)`;
+  W3 deterministic task_id + 0-block→StitchReady; W4 cache-before-slot + H-EMIT; W7 partial-drama policy
+  (FAILED block, barrier still resolves) — alternative hard-fail is a one-line swap; W5 DB-ordered chunks +
+  client-side concat; X7 PoisonError reserved for structurally-unprocessable (manuscript poison stays retryable).
 - **R2.0 divergence RESOLVED** (docs/DECISIONS.md 2026-06-25 R2.0): SPEC §1 wins — poison is a
   *consistently-failing* manuscript → DLQ after 3 retries via a SINGLE retryable `VendorError`.
 - **Phase 2 design notes** (docs/DECISIONS.md 2026-06-25 Phase 2): H8 stampede lock IMPLEMENTED (not the
@@ -69,6 +77,21 @@
 - [x] H15 — `begin_parse`: PENDING→PARSING CAS seeding `pending_count=N` only on rowcount 1 (re-run never resets); 3 counter_once tests (anchor b891a95)
 - [x] B6 — `job_counts_by_status`: read-only `GROUP BY` per-status aggregate for /stats (G7); 1 stats test (anchor b891a95)
 
+### Phase 4 — Worker pipeline (all passing; L3 testcontainers, Docker required) — anchor f62825c
+- [x] X3 — `worker/bootstrap.py` `build_context(settings=None)`/`close_context` + `WorkerContext`; ensure_slots once; 2 tests
+- [x] X2 — `worker/dispatch.py` `build_handlers(ctx)` queue→handler table; handler factories in handlers/{parse,tts,stitch}; 1 unit test
+- [x] X1 — `worker/main.py` run loop: build_context → register_consumers → await shutdown; SIGTERM/SIGINT (POSIX + Windows fallback); 2 unit tests
+- [x] W1 — `prefetch_for` per-queue prefetch (q.tts ≈ TTS_CONCURRENCY+1, not 16; H-PREFETCH); per-queue channels; 2 unit tests
+- [x] X7 — `worker/errors.py` TransientError/PoisonError + `is_poison` (manuscript poison stays retryable per R2.0); 3 unit tests
+- [x] W2 — `worker/handlers/_base.py` `ack_last` ⭐: process(ignore_processed) + terminal ack; poison→DLQ via max_retries=0; 7 unit tests
+- [x] W3 — `worker/handlers/parse.py` ⭐: ON CONFLICT tasks + begin_parse (1 tx) → advance GENERATING → always re-publish; 0-block→StitchReady; MAX_BLOCKS cap; 4 L3 tests
+- [x] W4 — `worker/handlers/tts.py` ⭐: cache-before-slot → H8 lock (no slot) → leased slot synth → B4 fan-in → StitchReady; H-EMIT; 3 L3 tests
+- [x] W7 — `worker/handlers/dlq.py` (H4): q.dlq resolver, partial-drama policy (FAILED block + decrement); routes by body shape; own ack/nack; 3 L3 tests
+- [x] W5 — `worker/handlers/stitch.py`: DB-ordered chunks + client-side concat → out/<job>.mp3 → CAS COMPLETED; idempotent (H5); 2 L3 tests
+- [x] H-SSRF — `worker/ssrf.py` `is_allowed`: allowlist + resolve-all-records private/loopback/etc block; 9 unit tests
+- [x] W5b — `_notify` in stitch.py: log-only if no allowlist, else SSRF guard + httpx post; failure swallowed (MUST #8); 3 L3 tests
+- New `core/infra/queries.py` helpers: `advance_status`, `fail_task_and_decrement` (W7), `finalize_job` (W5)
+
 ### Tests (43 unit + integration)
 - `tests/unit/` — 37 tests (architecture, error_handlers, events, health, logging, schemas, smoke, state_machine)
 - `tests/integration/test_ingestion.py` — 7 tests (lifespan, POST /jobs ×4, GET /status ×2)
@@ -77,33 +100,31 @@
 - `tests/integration/test_storage.py` — MinIO: idempotent bucket, text/bytes roundtrip, list_prefix, key_exists
 
 ## In Progress
-- **none** — WIP=0. Phase 2 Redis cards complete (all 7 passing). Next phase is the worker pipeline.
+- **none** — WIP=0. Phase 4 worker pipeline complete (all 12 BOM cards passing). Next phase is Gateway
+  completion (/stats, sweeper) and/or the Phase-6 L4 e2e probes.
 
 ## What's Genuinely Unbuilt (FEATURES.md scope)
-Phases 0–3 built (foundation, domain logic, Redis coordination, DB query layer). The infra adapters AND
-the atomic query ops are now complete (db, broker, storage, redis + `queries.py` fan-in/counter/stats).
-Remaining is the pipeline that composes them:
-- Phase 4 Worker pipeline: parse/TTS/stitch handlers (X1–X7, W1–W7) — broker topology + all adapters exist,
-  but `worker/handlers/{parse,tts,stitch}.py` are still STUBS. This is where redis.Semaphore/Cache/seen_once,
-  db.mark_event, and core.domain.vendor finally get wired into the choreography.
-- Phase 5 Gateway completion: /stats (G7/B6), PENDING-sweeper (G8/R3.4)
-- Phase 6 L4 e2e/behavior probes: crash-recovery, duplicate-delivery, poison-pill, semaphore, cache tests
-- Phase 7 Infra verification: I1–I4, H-DANGLE, H-PREFETCH
-- Phase 8 Architecture-defense docs: DOC1, DOC2
+Phases 0–4 built (foundation, domain logic, Redis coordination, DB query layer, worker pipeline). The full
+parse→TTS→stitch choreography + DLQ resolver + webhook now run end-to-end at L3. Remaining:
+- Phase 5 Gateway completion: `GET /stats` (G7/B6 — `job_counts_by_status` exists, needs the endpoint +
+  zero-fill); PENDING-sweeper (G8/R3.4 — re-publishes JobCreated for jobs stuck PENDING; reaper that calls
+  `Semaphore.reap()` + `purge_processed_events()` periodically — both are primitives, not self-scheduling).
+- Phase 6 L4 e2e/behavior probes (the rung cards R3.1/R3.2/R3.3/R4.1/R4.2/R4.3 `not_started`): crash-recovery
+  (docker kill mid-job → redeliver), duplicate-delivery, poison-pill (live DLQ-after-3), semaphore, cache.
+  These are the L4 owners of behaviors the Phase-4 cards verified at L3.
+- Phase 7 Infra verification: I1–I4, H-DANGLE.
+- Phase 8 Architecture-defense docs: DOC1 (document the W7 DLQ policy), DOC2.
 
 ## Next Steps
-1. **Phase 4 — Worker pipeline** (docs/features/04-worker.md): wire the now-complete adapters + `queries.py`
-   into the parse→TTS→stitch choreography. Build order by dependency: **X3** bootstrap (`worker/bootstrap.py`:
-   one wired context; call `ensure_slots()` once) → **X2** dispatch table (queue→handler) → **X1** run loop
-   (replace the idle `await asyncio.Future()`; clean SIGTERM) → then the handlers **W3 parse** (split_blocks →
-   `begin_parse` H15 → write N tasks → fan-out TtsRequested), **W4 tts** (`Cache.cache_get` BEFORE
-   `Semaphore.acquire` → vendor → MinIO → `cache_set` → `complete_task_and_decrement` B4 → emit StitchReady on
-   0), **W?/R4.3 stitch** (concat → COMPLETED → webhook). Invariants: ack LAST; consumers via `mark_event`
-   (authority) + `seen_once` (fast-path); NEVER inbox-skip parse (H2); 0-block job → STITCHING directly.
-2. **When R3.3 (DLQ e2e) is built**, honor the R2.0 reconciliation: poison routes through the retry ladder and
-   dead-letters after 3 attempts (single `VendorError`), per SPEC §1 / DECISIONS 2026-06-25.
-3. **When the TTS handler / X3 worker bootstrap is built**, call `Semaphore.ensure_slots()` once on boot and
-   run `Semaphore.reap()` periodically (the reaper isn't self-scheduling — X5 provides the primitive only).
+1. **Phase 5 — Gateway completion** (likely next file): `GET /stats` endpoint over `job_counts_by_status`
+   (B6) with zero-fill of all six FSM states (R5.1/G7); the PENDING-sweeper (G8/R3.4) + a periodic reaper
+   wiring `Semaphore.reap()` and `purge_processed_events()` into the worker bootstrap or a small scheduler.
+2. **Phase 6 — L4 e2e probes** (needs `make e2e` + the full compose stack): build `tests/e2e/` for R3.1
+   (docker kill mid-job → redeliver, no loss), R3.2 (duplicate delivery → exactly-once effect), R3.3 (poison
+   → DLQ-after-3, healthy traffic unblocked — honor the R2.0 single-`VendorError` reconciliation), R4.1/4.2/4.3.
+   The worker handlers are L3-proven; e2e wires them through the live broker under fault injection.
+3. **DOC1 (Phase 8):** write up the W7 DLQ resolver policy (partial-drama: FAILED block + barrier resolves;
+   alternative hard-fail). The decision is already implemented + recorded in DECISIONS 2026-06-25 "Phase 4".
 
 ## Known Issues / Gaps
 - **Arch review 2026-06-24:** 13 hardening holes; full traces in `tmp/ARCH-REVIEW-2026-06-24.md` and `BACKLOG.md`. The FEATURES.md card spine folds every fix into its owning card — do NOT build without those constraints.
