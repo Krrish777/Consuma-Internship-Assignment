@@ -462,6 +462,22 @@
       "evidence": "uv run pytest -m e2e -k 'stitch or webhook_failure_still_completed' -> 2 passed in 18s against the LIVE stack. test_stitch_happy_path_produces_completed_asset: 3-block job -> COMPLETED with final_key starting 'out/' ending '.mp3' (W5 client-side concat asset). test_webhook_failure_still_completed: job with callback_url='http://sink.invalid/hook' still -> COMPLETED with asset (MUST #8 - notification best-effort, never fails the job). HONEST L3/L4 split: actual webhook DELIVERY ('received once') + attempted-then-swallowed failure are L3-proven (test_webhook, 3 tests, SSRF resolver mocked); not re-run at L4 because the H-SSRF guard correctly rejects every private/loopback IP and in a hermetic compose stack every reachable sink (container, host.docker.internal) is private -> real delivery needs an external public endpoint (out of hermetic scope); default empty WEBHOOK_ALLOWLIST = log-only. make check green (106 unit). commit 700e587 base (uncommitted; user handles git)."
     },
     {
+      "id": "E-EDGE",
+      "rung": 4,
+      "behavior": "Edge-case battery (BOM 06-E-EDGE): the SPEC §3 corners must each converge to a correct terminal state — 0-block (fan-in of 0 must not hang), 1-block, all-cache-hit (every block served from cache), parse-crash-after-some-rows (no duplicate tasks), and dependency-bounce mid-job (recovers or fails cleanly, never corrupts).",
+      "verification": ["uv run pytest -m e2e -k edge (all edge scenarios terminate correctly)"],
+      "status": "passing",
+      "evidence": "uv run pytest -m e2e -k edge -> 4 passed in 38s against the LIVE stack. test_zero_block_manuscript_terminates: whitespace-only manuscript -> COMPLETED, 0 task rows, pending_count 0 (fan-in barrier of 0 resolves straight through, no hang). test_one_block_manuscript_completes: single paragraph -> COMPLETED, 1 DONE task, final_key. test_all_cache_hit_job_completes_reusing_assets: warm cache with job1, then identical job2 -> COMPLETED with audio_keys EXACTLY equal to job1's (every block a cache hit, same content-addressed assets). test_dependency_bounce_minio_job_converges: docker restart minio around a 4-block job -> COMPLETED with asset (MinIO is persistent (volume); storage ops failing during the restart are retried by the 1/4/16s ladder). HONEST split: parse-crash-after-some-rows -> no duplicate tasks is covered by R3.2 (duplicate JobCreated -> parse ON CONFLICT DO NOTHING) + L3 test_parse_redelivery; Redis-bounce deliberately NOT exercised because compose Redis has no volume and ensure_slots is boot-only, so a Redis wipe strands the TTS semaphore -> a real resilience gap documented in DECISIONS Phase-6 E-EDGE (not masked with a hanging test). make check green (106 unit). commit 700e587 base (uncommitted; user handles git)."
+    },
+    {
+      "id": "T-BEHAVIOR",
+      "rung": 5,
+      "behavior": "Functional correctness (BOM 11-T4, SPEC DoD gate #5): a real multi-block manuscript through the live stack yields a well-formed out/<job>.mp3 whose content is the ordered per-block concatenation, with Postgres and MinIO mutually consistent — proves the system actually produces correct output, not merely that units pass.",
+      "verification": ["uv run pytest -m e2e -k behavior (real manuscript -> correct, consistent produced asset)"],
+      "status": "passing",
+      "evidence": "uv run pytest -m e2e -k behavior -> 1 passed in 15s against the LIVE stack (test_real_manuscript_yields_correct_consistent_asset). A 3-scene manuscript -> COMPLETED, then asserted EXACT cross-store correctness using the deterministic sim (tts_fake_audio(t)=b'FAKE_AUDIO:'+content_hash(t)): Postgres = 3 DONE Task rows + final_key==out/<job>.mp3; MinIO raw/<job>.txt == the submitted manuscript verbatim; each tts/<content_hash(block)>.wav == tts_fake_audio(block); and out/<job>.mp3 == b''.join(tts_fake_audio(b) for b in split_blocks(manuscript)) in block order (not just status==COMPLETED). new minio_client fixture. make check green (106 unit). commit 700e587 base (uncommitted; user handles git)."
+    },
+    {
       "id": "R5.1",
       "rung": 5,
       "behavior": "Observability: GET /stats exposes job/queue counts.",

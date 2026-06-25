@@ -22,6 +22,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from minio import Minio
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -148,3 +149,14 @@ async def redis_client(stack: str) -> AsyncIterator[Redis]:
         yield client
     finally:
         await client.aclose()
+
+
+@pytest.fixture
+def minio_client(stack: str) -> Minio:
+    """A MinIO client to the compose object store for asserting stored bytes.
+
+    T-BEHAVIOR fetches ``raw/``, ``tts/`` and ``out/`` objects to prove the
+    produced asset is correct and the stores agree. The async storage helpers wrap
+    this sync client in ``to_thread``.
+    """
+    return Minio("localhost:9000", access_key="minioadmin", secret_key="minioadmin", secure=False)
