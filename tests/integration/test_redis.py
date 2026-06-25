@@ -71,6 +71,10 @@ async def test_semaphore_bounds_to_slots(client: redis_infra.Redis) -> None:
     t2 = await sem.acquire("w2", timeout=2)
     assert t2 == t0
 
+    assert t2 is not None
+    await sem.release(t1)
+    await sem.release(t2)
+
 
 async def test_acquire_records_lease_with_ttl(client: redis_infra.Redis) -> None:
     await client.rpush("tts:slots", "0")
@@ -81,6 +85,7 @@ async def test_acquire_records_lease_with_ttl(client: redis_infra.Redis) -> None
     ttl = await client.ttl(f"tts:lease:{token}")
     assert 0 < ttl <= 30
     assert await client.get(f"tts:lease:{token}") == b"worker-A"
+    await sem.release(token)
 
 
 async def test_release_clears_lease_and_returns_token(client: redis_infra.Redis) -> None:
@@ -137,3 +142,54 @@ async def test_ensure_slots_is_init_once_not_top_up(client: redis_infra.Redis) -
     # that would re-introduce the 3xN over-provisioning bug.
     await sem.ensure_slots()
     assert await client.llen("tts:slots") == 2
+    await sem.release(token)
+
+
+# --- X5: lease reaper (heartbeat renew + atomic reclaim) ----------------------
+
+
+async def test_reap_reclaims_a_crashed_holders_token(client: redis_infra.Redis) -> None:
+    sem = Semaphore(client, slots=3, lease_ttl=30)
+    # Manufacture an orphan: token "0" is out of the pool and its lease expired (a
+    # crashed holder never renewed it). Tokens "1","2" remain free in the pool.
+    await client.rpush("tts:slots", "1", "2")
+    await client.set("tts:lease:0", "dead-worker", ex=1)
+    await asyncio.sleep(1.5)  # lease "0" expires
+    assert await client.exists("tts:lease:0") == 0
+
+    reclaimed = await sem.reap()
+    assert reclaimed == 1
+    tokens = sorted(redis_infra._as_str(t) for t in await client.lrange("tts:slots", 0, -1))
+    assert tokens == ["0", "1", "2"]
+
+
+async def test_reap_leaves_a_live_heartbeating_holder_alone(
+    client: redis_infra.Redis,
+) -> None:
+    sem = Semaphore(client, slots=3, lease_ttl=3)  # heartbeat interval = 1s
+    await sem.ensure_slots()
+    token = await sem.acquire("alive-worker")
+    assert token is not None
+
+    # Outlive the TTL: a healthy holder's heartbeat must keep renewing the lease.
+    await asyncio.sleep(4)
+    assert await client.exists(f"tts:lease:{token}") == 1  # still leased
+
+    reclaimed = await sem.reap()
+    assert reclaimed == 0  # nothing to reap; the holder is alive
+    await sem.release(token)
+
+
+async def test_two_reapers_reclaim_a_token_at_most_once(
+    client: redis_infra.Redis,
+) -> None:
+    sem_a = Semaphore(client, slots=3, lease_ttl=30)
+    sem_b = Semaphore(client, slots=3, lease_ttl=30)
+    # Orphan token "0"; "1","2" are free in the pool.
+    await client.rpush("tts:slots", "1", "2")
+    await client.set("tts:lease:0", "dead", ex=1)
+    await asyncio.sleep(1.5)
+
+    results = await asyncio.gather(sem_a.reap(), sem_b.reap())
+    assert sum(results) == 1  # exactly one reaper returned the token
+    assert await client.llen("tts:slots") == 3  # no double-return

@@ -220,15 +220,15 @@
       "rung": 4,
       "behavior": "Semaphore init idempotency (BOM 12-X4, the 3xN-tokens footgun): ensure_slots() seeds exactly N tokens exactly-once across ALL workers via atomic Lua (init-marker: if unset DEL slots_key + RPUSH N tokens 0..N-1 + set marker; else no-op). Converges to exactly N regardless of how many workers call it concurrently. Never unconditional RPUSH on boot.",
       "verification": ["uv run pytest tests/integration -k redis (5 concurrent ensure_slots -> LLEN tts:slots == N exactly)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k redis -> 8 passed (2 new X4: 5 workers race ensure_slots concurrently -> LLEN tts:slots == 3 exactly with token identities ['0','1','2']; ensure_slots is init-once-not-top-up: after consuming a token a 2nd ensure_slots leaves 2 not 3) against real redis:7-alpine; atomic Lua (_ENSURE_SLOTS_LUA: init-marker guard + DEL + RPUSH N + SET marker) registered in Semaphore.__init__; full gate: ruff+fmt clean, mypy 44 files 0 errors, pytest tests/unit 82 passed; commit 6203aeb HEAD anchor (user handles git)"
     },
     {
       "id": "X5",
       "rung": 4,
       "behavior": "Lease reaper: heartbeat renew + atomic reclaim (BOM 12-X5, H6): acquire spawns a heartbeat task re-SET lease XX EX every ttl/3 (cancel on release) so a healthy-but-slow holder is never reclaimed; reap() atomically (Lua, owner-checked) RPUSHes expired-but-unreturned tokens back exactly once (concurrent reapers return a token at most once). Documented as soft/best-effort limit, breaches logged.",
       "verification": ["uv run pytest tests/integration -k redis (stopped-heartbeat holder reclaimed after TTL; heartbeating holder keeps token; two reapers reclaim once)"],
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": ""
     },
     {

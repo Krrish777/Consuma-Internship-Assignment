@@ -17,12 +17,18 @@ task:done:<task_id>.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from redis.asyncio import Redis, from_url
 
+from core.infra.logging import get_logger
+
 __all__ = ["Redis", "Semaphore", "get_redis", "ping"]
+
+_log = get_logger(__name__)
 
 SLOTS_KEY = "tts:slots"
 
@@ -30,6 +36,41 @@ SLOTS_KEY = "tts:slots"
 def _as_str(value: bytes | str) -> str:
     """Normalise a Redis reply to str (decode_responses=False yields bytes)."""
     return value.decode() if isinstance(value, bytes) else value
+
+
+# Atomic, exactly-once pool seeding (X4). Runs server-side with no interleaving, so
+# any number of racing workers converge to exactly N tokens. KEYS[1]=slots list,
+# KEYS[2]=init marker, ARGV[1]=N. Init-once (guarded by the marker), never top-up.
+_ENSURE_SLOTS_LUA = """
+if redis.call('GET', KEYS[2]) then
+    return 0
+end
+redis.call('DEL', KEYS[1])
+for i = 0, tonumber(ARGV[1]) - 1 do
+    redis.call('RPUSH', KEYS[1], tostring(i))
+end
+redis.call('SET', KEYS[2], '1')
+return 1
+"""
+
+
+# Atomic, owner-safe reclaim of one orphaned token (X5). KEYS[1]=slots list,
+# KEYS[2]=lease key, ARGV[1]=token. Returns the token to the pool ONLY if its lease
+# is gone (holder dead/expired) AND it is not already in the pool — so two reapers
+# racing the same token return it at most once (the second sees it already present).
+_RECLAIM_LUA = """
+if redis.call('EXISTS', KEYS[2]) == 1 then
+    return 0
+end
+local items = redis.call('LRANGE', KEYS[1], 0, -1)
+for _, v in ipairs(items) do
+    if v == ARGV[1] then
+        return 0
+    end
+end
+redis.call('RPUSH', KEYS[1], ARGV[1])
+return 1
+"""
 
 
 def get_redis(url: str) -> Redis:
@@ -67,6 +108,13 @@ class Semaphore:
 
     Callers MUST check the content cache BEFORE ``acquire`` (W4 order) — a cache hit
     must not burn a token (SPEC §4).
+
+    Soft limit (H6 honesty): this is a *best-effort* global limit, not a perfectly
+    hard one — a distributed semaphore cannot be hard without consensus. A live-but-
+    slow holder is protected by a heartbeat that renews its lease at ⅓-TTL; a dead
+    holder's lease expires and the X5 reaper returns its token. In the rare window
+    where a healthy holder stalls past its (heartbeated) TTL, a reap can briefly
+    allow slots+1 concurrent — ``reap`` logs such reclaims so breaches are visible.
     """
 
     def __init__(
@@ -81,9 +129,28 @@ class Semaphore:
         self.slots = slots
         self.lease_ttl = lease_ttl
         self.slots_key = slots_key
+        self._init_marker = f"{slots_key}:init"
+        # token -> its heartbeat task, so release() can stop renewing the lease.
+        self._heartbeats: dict[str, asyncio.Task[None]] = {}
+        # register_script is sync; it just wraps the source + SHA for later EVALSHA.
+        self._ensure_slots_script = client.register_script(_ENSURE_SLOTS_LUA)
+        self._reclaim_script = client.register_script(_RECLAIM_LUA)
 
     def _lease_key(self, token: str) -> str:
         return f"tts:lease:{token}"
+
+    async def ensure_slots(self) -> None:
+        """Seed the pool with exactly N tokens, exactly once across ALL workers.
+
+        Idempotent and convergent under concurrency (atomic Lua + init marker): the
+        first caller seeds tokens "0".."N-1"; every later call — including reboots —
+        is a no-op. This is deliberately *init-once, not top-up*: re-seeding tokens
+        that have since been acquired would recreate the 3xN over-provisioning bug.
+        """
+        await self._ensure_slots_script(
+            keys=[self.slots_key, self._init_marker],
+            args=[self.slots],
+        )
 
     async def acquire(self, owner: str, *, timeout: float = 0.0) -> str | None:
         """Block (``BLPOP``) for a free slot; return its token, or None on timeout.
@@ -96,14 +163,63 @@ class Semaphore:
         if raw is None:
             return None
         token = _as_str(raw[1])
-        # Record the lease so a crashed holder's slot auto-expires (H6 / X5).
+        # Record the lease so a crashed holder's slot auto-expires (H6 / X5)...
         await self._client.set(self._lease_key(token), owner, nx=True, ex=self.lease_ttl)
+        # ...and keep it alive while we hold it, so a slow-but-healthy holder is
+        # never reclaimed out from under itself.
+        self._heartbeats[token] = asyncio.create_task(self._heartbeat(token, owner))
         return token
 
     async def release(self, token: str) -> None:
-        """Return a held token to the pool: clear its lease, then RPUSH it back."""
+        """Return a held token to the pool: stop the heartbeat, clear its lease, RPUSH.
+
+        Cancelling the heartbeat first prevents a renew from racing the delete; the
+        delete-before-RPUSH order then guarantees the next acquirer's ``SET ... NX``
+        on the lease succeeds.
+        """
+        heartbeat = self._heartbeats.pop(token, None)
+        if heartbeat is not None:
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat
         await self._client.delete(self._lease_key(token))
         await self._client.rpush(self.slots_key, token)
+
+    async def _heartbeat(self, token: str, owner: str) -> None:
+        """Renew the lease every ⅓-TTL with ``SET ... XX`` (renew only if still held).
+
+        Runs until ``release`` cancels it. XX means a lease that has already expired
+        is NOT resurrected — if we ever fall behind past the TTL, the reaper rightly
+        wins the token (the documented soft-limit edge).
+        """
+        interval = self.lease_ttl / 3
+        while True:
+            await asyncio.sleep(interval)
+            await self._client.set(self._lease_key(token), owner, xx=True, ex=self.lease_ttl)
+
+    async def reap(self) -> int:
+        """Reclaim tokens whose holder died (lease expired) but never returned them.
+
+        Each token is reclaimed under an atomic owner-safe Lua step, so concurrent
+        reapers return any given token at most once. Returns the number reclaimed.
+        """
+        reclaimed = 0
+        for i in range(self.slots):
+            token = str(i)
+            result = await self._reclaim_script(
+                keys=[self.slots_key, self._lease_key(token)],
+                args=[token],
+            )
+            reclaimed += int(result)
+        if reclaimed:
+            _log.warning(
+                "tts semaphore reclaimed %d orphaned lease(s); global limit is "
+                "best-effort/soft — reclaiming past a live-but-slow holder can "
+                "briefly exceed %d concurrent",
+                reclaimed,
+                self.slots,
+            )
+        return reclaimed
 
     @asynccontextmanager
     async def slot(self, owner: str, *, timeout: float = 0.0) -> AsyncIterator[str | None]:
