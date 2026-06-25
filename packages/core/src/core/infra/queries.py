@@ -67,6 +67,43 @@ async def complete_task_and_decrement(
     return int(remaining)
 
 
+async def fail_task_and_decrement(
+    session: AsyncSession, job_id: str, task_id: str
+) -> int | None:
+    """DLQ fan-in resolver (W7/H4) — mark a poisoned task FAILED, then decrement.
+
+    Same atomic shape as :func:`complete_task_and_decrement`, but it records the
+    task as ``FAILED`` instead of ``DONE`` so a poisoned block still resolves the
+    fan-in barrier (the job converges instead of stalling forever in GENERATING;
+    the stitch handler later skips FAILED blocks).
+
+    The conditional claim guards against BOTH terminal states
+    (``status NOT IN ('DONE','FAILED')``) so a duplicate DLQ delivery — or a task
+    that already succeeded — does not double-decrement. Returns the new
+    ``pending_count`` (emit ``StitchReady`` when it is 0) or ``None`` when the task
+    was already terminal (idempotent no-op).
+    """
+    claim = (
+        update(Task)
+        .where(Task.task_id == task_id, Task.status.not_in(["DONE", "FAILED"]))
+        .values(status="FAILED")
+    )
+    claimed = cast("CursorResult[Any]", await session.execute(claim))
+    if claimed.rowcount == 0:
+        await session.commit()
+        return None
+
+    decrement = (
+        update(Job)
+        .where(Job.job_id == job_id)
+        .values(pending_count=Job.pending_count - 1)
+        .returning(Job.pending_count)
+    )
+    remaining = (await session.execute(decrement)).scalar_one()
+    await session.commit()
+    return int(remaining)
+
+
 async def begin_parse(session: AsyncSession, job_id: str, n_blocks: int) -> bool:
     """Initialise ``pending_count`` exactly once, on the first CAS out of PENDING (H15).
 

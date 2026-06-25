@@ -25,10 +25,11 @@ import signal
 
 from core.config import Settings
 from core.infra import broker
-from core.infra.broker import Handler, Q_TTS
+from core.infra.broker import Handler, Q_DLQ, Q_TTS
 from core.infra.logging import get_logger
 from worker.bootstrap import WorkerContext, build_context, close_context
 from worker.dispatch import build_handlers
+from worker.handlers.dlq import make_dlq_handler
 
 log = get_logger("worker")
 
@@ -87,8 +88,10 @@ async def run() -> None:
     install_signal_handlers(asyncio.get_running_loop(), shutdown)
 
     handlers = build_handlers(ctx)
+    # W7: the DLQ resolver runs OFF the hot queue so healthy traffic is unaffected.
+    handlers[Q_DLQ] = make_dlq_handler(ctx)
     await register_consumers(ctx, handlers)
-    log.info("worker running; consuming q.parse / q.tts / q.stitch")
+    log.info("worker running; consuming q.parse / q.tts / q.stitch / q.dlq")
 
     try:
         await shutdown.wait()
