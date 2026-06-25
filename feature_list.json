@@ -442,8 +442,8 @@
       "rung": 4,
       "behavior": "Global TTS semaphore in Redis (leased token list, TTL): max 3 concurrent across ALL workers; a crashed worker's slot auto-reclaims via TTL.",
       "verification": ["make e2e -k semaphore (>3 requested -> never >3 in flight; killed holder's slot returns)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest -m e2e -k semaphore -> 1 passed in 28s against the LIVE stack (test_scaled_workers_share_one_global_semaphore). docker compose up --scale worker=4, then asserted LLEN(tts:slots)==TTS_CONCURRENCY==3 across all 4 replicas (NOT 4x3=12) -> the semaphore is GLOBAL and X4 ensure_slots is atomic/idempotent across workers (the 3xN footgun is defeated). Submitted a burst (4 jobs x 4 blocks = 16 TTS tasks) through the shared 3-slot pool -> all COMPLETED (no deadlock), then LLEN(tts:slots) back to 3 (no token leak). Scaled back to 1. Covers I4 (replicas share one semaphore). HONEST measurement caveat: the sim's vendor latency is asyncio.sleep(0), so a slot is held for microseconds and external live-peak sampling is impossible; the >3-never-concurrent bound is STRUCTURAL (BLPOP on a 3-token pool) and the live-peak + X5 crashed-holder reclaim are L3-proven (test_redis semaphore/reaper). new helpers.scale_workers + redis_client fixture. make check green (106 unit). commit 700e587 base (uncommitted; user handles git)."
     },
     {
       "id": "R4.2",
