@@ -48,13 +48,8 @@ def gateway_ctx() -> Generator[dict[str, Any], None, None]:
         MinioContainer("minio/minio:latest") as minio,
     ):
         pg_url = pg.get_connection_url().replace("psycopg2", "asyncpg")
-        rmq_url = (
-            f"amqp://guest:guest@"
-            f"{rmq.get_container_host_ip()}:{rmq.get_exposed_port(5672)}/"
-        )
-        minio_endpoint = (
-            f"{minio.get_container_host_ip()}:{minio.get_exposed_port(9000)}"
-        )
+        rmq_url = f"amqp://guest:guest@{rmq.get_container_host_ip()}:{rmq.get_exposed_port(5672)}/"
+        minio_endpoint = f"{minio.get_container_host_ip()}:{minio.get_exposed_port(9000)}"
 
         test_settings = Settings(
             DATABASE_URL=pg_url,
@@ -137,9 +132,7 @@ def test_post_jobs_stores_manuscript_in_minio(gateway_ctx: dict[str, Any]) -> No
     assert r.status_code == 202
     job_id: str = r.json()["job_id"]
 
-    minio_client = _make_client(
-        gateway_ctx["minio_endpoint"], "minioadmin", "minioadmin"
-    )
+    minio_client = _make_client(gateway_ctx["minio_endpoint"], "minioadmin", "minioadmin")
 
     async def fetch() -> str:
         return await get_text(minio_client, f"raw/{job_id}.txt")
