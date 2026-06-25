@@ -33,7 +33,7 @@ from core.infra.db import (
     purge_processed_events,
 )
 from core.domain.state import JobStatus
-from core.infra.queries import begin_parse, complete_task_and_decrement
+from core.infra.queries import begin_parse, complete_task_and_decrement, job_counts_by_status
 
 pytestmark = pytest.mark.integration
 
@@ -307,6 +307,34 @@ async def test_counter_once_concurrent_only_one_wins(engine: AsyncEngine) -> Non
 
     assert results.count(True) == 1  # exactly one first-runner
     async with get_session(engine) as session:
-        job = await session.get(Job, job_id)
-        assert job is not None
-        assert job.pending_count == 7  # seeded once
+        refreshed = await session.get(Job, job_id)
+        assert refreshed is not None
+        assert refreshed.pending_count == 7  # seeded once
+
+
+# --- B6: status-count aggregate for /stats (read-only GROUP BY) ---------------
+
+
+async def test_stats_counts_jobs_by_status(engine: AsyncEngine) -> None:
+    """job_counts_by_status returns accurate per-status counts via SQL GROUP BY.
+
+    The integration DB is a shared container with rows left by other tests, so we
+    assert per-status *deltas* against a baseline rather than absolute totals.
+    """
+    async with get_session(engine) as session:
+        before = await job_counts_by_status(session)
+
+    seeded = {JobStatus.STITCHING: 2, JobStatus.FAILED: 3, JobStatus.COMPLETED: 1}
+    async with get_session(engine) as session:
+        for status, count in seeded.items():
+            for i in range(count):
+                session.add(Job(manuscript_key=f"raw/b6-{status.value}-{i}.txt", status=status))
+        await session.commit()
+
+    async with get_session(engine) as session:
+        after = await job_counts_by_status(session)
+
+    # Keys are status value strings, values are ints; deltas match exactly.
+    for status, count in seeded.items():
+        assert isinstance(after[status.value], int)
+        assert after[status.value] - before.get(status.value, 0) == count

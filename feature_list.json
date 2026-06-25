@@ -268,15 +268,15 @@
       "rung": 2,
       "behavior": "Set pending_count only on the first CAS out of PENDING (BOM backlog-H15, parse re-runnability corollary of H2): begin_parse(session, job_id, n_blocks)->bool does a CAS UPDATE jobs SET status=PARSING, pending_count=N WHERE job_id AND status=PENDING. rowcount==1 => first run (counter set, returns True); rowcount==0 => parse redelivery (job already advanced, counter untouched, returns False). A parse re-run MUST NOT reset pending_count (that would resurrect already-decremented tasks and the job would never finish). NOTE: FSM legal successor of PENDING is PARSING (state.py LEGAL), not GENERATING as the card title loosely states.",
       "verification": ["uv run pytest tests/integration -k 'models or counter_once' (begin_parse twice -> True then False; counter set exactly once; a re-run leaves a decremented counter intact)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k 'models or counter_once' -> 12 passed (3 new H15 counter_once: first begin_parse CAS PENDING->PARSING seeds pending_count=5 and returns True; after a simulated decrement to 4 a redelivery returns False and leaves the counter at 4 NOT reset to 5; 5 concurrent begin_parse -> exactly one True, counter seeded once at 7) against real postgres:17-alpine; begin_parse in core/infra/queries.py does the FSM-legal PENDING->PARSING CAS (state.py LEGAL forbids PENDING->GENERATING; card title loose) setting pending_count only on rowcount==1; full gate: ruff+fmt clean, mypy 45 files 0 errors, pytest tests/unit 82 passed; commit b891a95 HEAD anchor (user handles git)"
     },
     {
       "id": "B6",
       "rung": 5,
       "behavior": "Status-count aggregate for /stats (BOM 03-B6, powers G7/R5.1): job_counts_by_status(session)->dict[str,int] via select(Job.status, func.count()).group_by(Job.status) -> .all(). Read-only aggregate (no locks, no writes); SQL GROUP BY, never load all rows and count in Python.",
       "verification": ["uv run pytest tests/integration -k 'models or stats' (seed jobs in mixed states -> returned dict matches expected per-status counts)"],
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": ""
     },
     {
