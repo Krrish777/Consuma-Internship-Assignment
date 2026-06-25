@@ -128,13 +128,18 @@ parse→TTS→stitch choreography + DLQ resolver + webhook now run end-to-end at
 
 ## Known Issues / Gaps
 - **Arch review 2026-06-24:** 13 hardening holes; full traces in `tmp/ARCH-REVIEW-2026-06-24.md` and `BACKLOG.md`. The FEATURES.md card spine folds every fix into its owning card — do NOT build without those constraints.
-- Worker pipeline body: worker/main.py is an idle skeleton; handlers/{parse,tts,stitch}.py are STUBS
-  (docstring-only, no logic wired). The parse handler will wrap `core.domain.vendor.simulate_parse`
-  with `asyncio.sleep` for latency (no separate `_sim.py` — fault logic stays pure in core/domain).
-- `core/infra/redis.py`: **complete** (R1/R2/X4/X5/R3/H8 + `seen_once`). `db.py` gained `mark_event` +
-  `purge_processed_events` (R4inbox). `core/infra/queries.py`: **now complete** (B4
-  `complete_task_and_decrement`, H15 `begin_parse`, B6 `job_counts_by_status`) — the Phase-4 handlers call
-  these. The reaper (`Semaphore.reap`) and retention (`purge_processed_events`) are primitives — a
-  scheduler must call them (worker bootstrap / sweeper, Phase 4/5).
+- Worker pipeline body: **complete** (Phase 4). `worker/main.py` runs a real consume loop; `handlers/
+  {parse,tts,stitch,dlq}.py` + `bootstrap.py`/`dispatch.py`/`errors.py`/`ssrf.py` are all wired and L3-tested.
+  The parse handler wraps `simulate_parse` with `await asyncio.sleep(0)` (latency stand-in; fault logic stays
+  pure in core/domain).
+- **Reaper/retention still not scheduled (Phase 5 gap):** `build_context` calls `ensure_slots()` once, but
+  nothing yet calls `Semaphore.reap()` or `purge_processed_events()` periodically — they remain primitives
+  awaiting a scheduler in the worker bootstrap / sweeper.
+- **Known edge (W7/B4):** `complete_task_and_decrement` guards only `status != 'DONE'`; a DLQ-failed task
+  followed by a late TTS success could double-decrement (harmless — StitchReady already fired). The realistic
+  flow can't hit it; left B4 untouched rather than refactor a passing card. See DECISIONS 2026-06-25 "Phase 4".
+- `core/infra/redis.py`: **complete** (R1/R2/X4/X5/R3/H8 + `seen_once`). `db.py` has `mark_event` +
+  `purge_processed_events` (R4inbox). `core/infra/queries.py`: **complete** (B4/H15/B6 + Phase-4 additions
+  `advance_status`, `fail_task_and_decrement`, `finalize_job`).
 - `domain/text.py`, `domain/hash.py`: now exist (D3/D4 done).
 - `domain/models.py`: removed (F0.3).
