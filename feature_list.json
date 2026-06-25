@@ -5,6 +5,18 @@
   "rules": "One feature in_progress at a time. active->passing ONLY when `verification` runs green AND `evidence` records the proof (commit hash + verify reference). Do not hand-edit a feature to 'passing'.",
   "features": [
     {
+      "id": "F0.1",
+      "rung": 0,
+      "behavior": "Reconcile stale feature_list.json statuses + refresh PROGRESS.md: confirm R2.2x tests pass, fix -k selectors to match real test names, update PROGRESS.md to reflect true HEAD (core/infra done; gateway done; worker idle skeleton; next = Phase 1 domain cards). Fix Ryuk testcontainers issue so integration tests run cleanly.",
+      "verification": [
+        "python .claude/scripts/check-wip.py && python .claude/scripts/check-evidence.py (exit 0)",
+        "uv run pytest tests/unit -k 'schemas or error_handlers' (10 passed)",
+        "uv run pytest tests/integration -k ingestion (7 passed)"
+      ],
+      "status": "in_progress",
+      "evidence": ""
+    },
+    {
       "id": "R0.1",
       "rung": 0,
       "behavior": "Gateway boots; GET /health returns 200 {\"status\":\"ok\"}.",
@@ -18,7 +30,7 @@
       "behavior": "Worker boots, connects to RabbitMQ via connect_robust, and idles without crashing.",
       "verification": ["docker compose up worker -> logs 'worker connected'"],
       "status": "passing",
-      "evidence": "docker logs consuma-worker-1 -> INFO:worker:worker connected; idle. RABBITMQ_ERLANG_COOKIE fix added to compose. All 6 services healthy. Commit ab425da + working-tree (pending commit)"
+      "evidence": "docker logs consuma-worker-1 -> INFO:worker:worker connected; idle. RABBITMQ_ERLANG_COOKIE fix added to compose. All 6 services healthy. Commit ab425da + committed ac9dee0 + 61d73fe"
     },
     {
       "id": "R0.3",
@@ -26,7 +38,7 @@
       "behavior": "Full 6-service docker-compose stack builds and all services report healthy.",
       "verification": ["./init.sh -> all services healthy; exit 0"],
       "status": "passing",
-      "evidence": "bash init.sh -> All services healthy -> 21 passed, exit 0. Commit ab425da + working-tree (pending commit)"
+      "evidence": "bash init.sh -> All services healthy -> 21 passed, exit 0. Commit ab425da + committed ac9dee0 + 61d73fe"
     },
     {
       "id": "R0.4",
@@ -34,7 +46,7 @@
       "behavior": "Structured logging (core/infra/logging.py): configure_logging() + get_logger(name); job_id/task_id bound via contextvars so concurrent jobs don't bleed ids; every log line carries job_id (the trace key). No print/breakpoint anywhere.",
       "verification": ["uv run pytest tests/unit -k logging (bound job_id present in emitted line; two concurrent contexts don't bleed ids; pure, no Docker)"],
       "status": "passing",
-      "evidence": "uv run pytest tests/unit -k logging -> 6 passed (configure, bind, filter stamp, get_logger, concurrent isolation). Commit ab425da + working-tree (pending commit)"
+      "evidence": "uv run pytest tests/unit -k logging -> 6 passed (configure, bind, filter stamp, get_logger, concurrent isolation). Commit ab425da + committed ac9dee0 + 61d73fe"
     },
     {
       "id": "R1.1",
@@ -42,7 +54,7 @@
       "behavior": "SQLAlchemy models Job, Task, ProcessedEvent + Alembic migration; durable truth in Postgres.",
       "verification": ["uv run pytest tests/integration -k models (Postgres via testcontainers)"],
       "status": "passing",
-      "evidence": "uv run pytest tests/integration -k models -> 4 passed (job CRUD, task unique constraint, processed_event ON CONFLICT dedup, atomic pending_count decrement). Commit ab425da + working-tree (pending commit)"
+      "evidence": "uv run pytest tests/integration -k models -> 4 passed (job CRUD, task unique constraint, processed_event ON CONFLICT dedup, atomic pending_count decrement). Commit ab425da + committed ac9dee0 + 61d73fe"
     },
     {
       "id": "R1.2",
@@ -50,7 +62,7 @@
       "behavior": "Job FSM can_transition() enforces legal transitions (PENDING->PARSING->GENERATING->STITCHING->COMPLETED; any->FAILED).",
       "verification": ["uv run pytest tests/unit -k state_machine (pure, no Docker)"],
       "status": "passing",
-      "evidence": "uv run pytest tests/unit -k state_machine -> 8 passed (forward path, terminal states, backwards, skip). Commit ab425da + working-tree (pending commit)"
+      "evidence": "uv run pytest tests/unit -k state_machine -> 8 passed (forward path, terminal states, backwards, skip). Commit ab425da + committed ac9dee0 + 61d73fe"
     },
     {
       "id": "R1.3",
@@ -58,7 +70,7 @@
       "behavior": "MinIO storage adapter: ensure_bucket, put_text/get_text, put_bytes/get_bytes, list_prefix.",
       "verification": ["uv run pytest tests/integration -k storage (MinIO via testcontainers)"],
       "status": "passing",
-      "evidence": "uv run pytest tests/integration -k storage -> 5 passed (idempotent bucket, text roundtrip, bytes roundtrip, list_prefix, key_exists). Commit ab425da + working-tree (pending commit)"
+      "evidence": "uv run pytest tests/integration -k storage -> 5 passed (idempotent bucket, text roundtrip, bytes roundtrip, list_prefix, key_exists). Commit ab425da + committed ac9dee0 + 61d73fe"
     },
     {
       "id": "R1.4",
@@ -82,47 +94,47 @@
       "behavior": "Broker topology declared: exchange + q.parse/q.tts/q.stitch + per-stage retry ladder (1/4/16s) + q.dlq.",
       "verification": ["uv run pytest tests/integration -k topology (RabbitMQ via testcontainers)"],
       "status": "passing",
-      "evidence": "uv run pytest tests/integration -k topology -> 5 passed (live queues, retry queues with TTL/DLX, retry routing, DLQ after max_retries, x-retry-count header). H-XDEATH + H-TTLHOL addressed. Commit ab425da + working-tree (pending commit)"
+      "evidence": "uv run pytest tests/integration -k topology -> 5 passed (live queues, retry queues with TTL/DLX, retry routing, DLQ after max_retries, x-retry-count header). H-XDEATH + H-TTLHOL addressed. Commit ab425da + committed ac9dee0 + 61d73fe"
     },
     {
       "id": "R2.2a",
       "rung": 2,
       "behavior": "Gateway lifespan startup wiring (G2): on startup open robust broker.connect + channel + declare topology + grab the pipeline exchange; db engine; storage.ensure_bucket(); stash on app.state. Open once (not per-request); close cleanly on shutdown.",
       "verification": ["uv run pytest tests/integration -k lifespan (app starts; app.state.exchange usable to publish; shuts down without leaking connections)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k lifespan -> 1 passed (lifespan startup + GET /health 200). commit 61d73fe"
     },
     {
       "id": "R2.2b",
       "rung": 2,
       "behavior": "Gateway pydantic schemas (gateway/schemas.py, G4): CreateJobRequest{manuscript, callback_url?}, JobAccepted{job_id}, JobStatusResponse{job_id, status, ...}. Empty manuscript allowed (becomes a 0-block job that still terminates).",
       "verification": ["uv run pytest tests/unit -k schemas (valid body parses; missing manuscript -> validation error; pure, no Docker)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k schemas -> 6 passed (valid, callback, empty ok, missing->422, JobAccepted, JobStatusResponse). commit 61d73fe"
     },
     {
       "id": "R2.2c",
       "rung": 2,
       "behavior": "Gateway CORS + error handlers (G3): CORSMiddleware + exception handlers. Bad body -> 422 structured JSON; unhandled raise -> 500 JSON (never an HTML stack page). Error bodies machine-readable, carrying job_id when one exists.",
       "verification": ["uv run pytest tests/unit -k error_handlers (bad POST body -> 422 JSON; internal raise -> 500 JSON)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/unit -k error_handlers -> 4 passed (missing->422, null->422, wrong content-type->422, unhandled AttributeError->500 JSON). commit 61d73fe"
     },
     {
       "id": "R2.2",
       "rung": 2,
       "behavior": "Ingestion (G5): POST /jobs -> storage.put_text(raw/<job>.txt) -> insert Job(PENDING) + COMMIT -> THEN publish JobCreated to q.parse -> 202 + {job_id}. Dual-write order is load-bearing: MinIO -> DB commit -> publish.",
       "verification": ["uv run pytest tests/integration -k ingestion (POST /jobs -> 202 + Job PENDING in PG + raw/<job>.txt in MinIO + JobCreated on q.parse)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k ingestion -> 4 passed (202+job_id, PENDING in PG, MinIO roundtrip, JobCreated on q.parse). commit 61d73fe"
     },
     {
       "id": "R2.2d",
       "rung": 2,
       "behavior": "Status read (G6): GET /status/{job_id} -> job status (+ optional pending_count progress); unknown id -> 404.",
       "verification": ["uv run pytest tests/integration -k status (known id -> its status; unknown id -> 404)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k status -> 2 passed (known->PENDING, unknown->404). commit 61d73fe"
     },
     {
       "id": "R2.3",

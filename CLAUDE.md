@@ -3,6 +3,10 @@
 Agent landing page. This is a **router**, not the spec. Read the linked docs on demand.
 **Single source of truth for requirements & decisions: [`docs/SPEC.md`](docs/SPEC.md).**
 
+> **After compaction / new session:** read [`.claude/BRIEFING.md`](.claude/BRIEFING.md) first — it
+> contains persona, the 8 MUSTs, methodology, current card state, and the immediate next steps.
+> Then read [`.remember/remember.md`](.remember/remember.md) for the latest session handoff.
+
 ## What this is
 Core async engine: text manuscript → simulated produced audio drama, via **choreographed**
 microservices (no central orchestrator). It is a distributed-systems reliability test — the
