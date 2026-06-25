@@ -28,7 +28,11 @@ services:
 
   rabbitmq:
     image: rabbitmq:4-management   # management UI at http://localhost:15672 (guest/guest)
+    environment:
+      # Fixed cookie avoids the .erlang.cookie eacces error on Windows Docker Desktop.
+      RABBITMQ_ERLANG_COOKIE: "consuma-secret-cookie"
     ports: ["5672:5672", "15672:15672"]
+    volumes: ["rmqdata:/var/lib/rabbitmq"]
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s
@@ -53,8 +57,6 @@ services:
     ports: ["9000:9000", "9001:9001"]
     volumes: ["miniodata:/data"]
     healthcheck:
-      # NOTE: verify on first `docker compose up` — if the image lacks curl, switch to
-      # ["CMD", "mc", "ready", "local"] or a TCP check.
       test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
       interval: 5s
       timeout: 3s
@@ -87,4 +89,5 @@ services:
 
 volumes:
   pgdata:
+  rmqdata:
   miniodata:
