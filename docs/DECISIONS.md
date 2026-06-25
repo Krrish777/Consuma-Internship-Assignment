@@ -532,3 +532,47 @@ FEATURES.md was exhausted; the user directed the optional-hardening backlog and 
   semaphore e2e → 6 passed. Changed files: `worker/maintenance.py` (new), `worker/main.py` (wire + cancel),
   `core/config.py` (RESEED_INTERVAL_S), `tests/unit/test_reseeder.py` (new), `tests/e2e/helpers.py`
   (flush_redis/redis_llen), `tests/e2e/test_edge_cases.py` (probe #5 + docstring). commit e4a464c (user handles git).
+
+## 2026-06-25 · Optional hardening / H2 — schedule Semaphore.reap() in the worker (H-REAP)
+- **Gap:** `Semaphore.reap()` (owner-checked atomic Lua, returns a crashed holder's orphaned token to the
+  pool exactly once) was L3-proven (X5) but **never called periodically**, so a worker that crashed mid-TTS
+  shrank the effective pool until the next reboot. The new work is *only scheduling* an already-proven primitive.
+- **Approach:** `run_reaper` in `worker/maintenance.py` — a sleep-first, swallow-and-continue loop calling
+  `semaphore.reap()` every `REAP_INTERVAL_S` (default 30s), launched as a second `asyncio.Task` alongside the
+  H1 reseeder in `worker.main run()` and cancelled cleanly on shutdown. Kept as a **separate loop** (not folded
+  into the reseeder) so each concern is independently testable and independently cardable.
+- **Why it's safe:** `reap()` is owner-checked and the ⅓-TTL heartbeat keeps a live-but-slow holder's lease
+  fresh, so a periodic reaper only ever reclaims genuinely-dead holders — it cannot disturb a live one
+  (`test_reap_leaves_a_live_heartbeating_holder_alone`, L3). Proven: the e2e semaphore probe still holds the
+  3-slot limit with BOTH maintenance loops live.
+- **Verified:** TDD — `tests/unit/test_reaper.py` first (RED: no `run_reaper`), then the loop (GREEN, 4 tests).
+  `make check` green (121 unit, later 125 with H3). L3 `test_redis.py -k reap` → 3 passed (semantics unchanged).
+  L4 on a clean **GitHub Codespace** (local Docker Desktop wedged mid-session on an unkillable zombie container;
+  see the follow-up note below): `pytest -m e2e tests/e2e/test_semaphore.py` → 1 passed. commit 3e61efe (user handles git).
+
+## 2026-06-25 · Optional hardening / H3 — fold processed_events retention into the sweep loop (H-PURGE)
+- **Gap:** `purge_processed_events()` (H10 retention, DB-side `now()` cutoff) was L3-proven but **never
+  scheduled**, so the durable idempotency inbox (`mark_event`) grew unbounded. G8 had deliberately kept
+  `run_sweeper` re-publish-only, leaving retention as a documented follow-up — this is that follow-up.
+- **Approach:** new `purge_once(engine, retention_s)` in `gateway/sweeper.py` (opens a session, calls
+  `purge_processed_events`, **commits explicitly** — `get_session` does not auto-commit), called from
+  `run_sweeper` each pass **alongside** `sweep_once`, each in its **own `try`** so a failure in one never skips
+  the other (re-publish and retention are independent jobs). `sweep_once` left untouched (the G8 re-publish-only
+  contract holds). `run_sweeper` gained a `retention_s` param wired from `Settings.PROCESSED_EVENTS_RETENTION_S`
+  in the gateway lifespan. Ran on the existing sweep cadence rather than a separate slower loop (KISS — the
+  DELETE is a cheap near-no-op once the table is bounded; a coarser interval was judged not worth the extra loop).
+- **Verified:** TDD — `tests/unit/test_sweeper_loop.py` first, RED proven by temporarily disabling the
+  `purge_once` call (all 4 loop tests failed, `purge.await_count` 0), then restored → GREEN (sweep+purge each
+  pass, configured `retention_s`, neither job skips the other, loop survives both failures). `make check` green
+  (125 unit). L3 on the **Codespace**: `pytest tests/integration/test_sweeper.py -k purge` → 2 passed (an aged
+  inbox row — `consumed_at` backdated via DB-side `now()-interval` — is deleted at `retention_s=100`; a fresh
+  row and one within a 3600s window are kept). Implemented under the user's "do the rest of the stuff" directive
+  while H-REAP awaited its Docker-gated L4; both verified together on the Codespace. commit 3e61efe (user handles git).
+
+## 2026-06-25 · Follow-up noted (not yet a card) — `init: true` on worker/gateway compose services
+The mid-session Docker wedge ("container PID … is zombie and can not be killed", blocking `down`/`rm -f` and
+forcing a Docker Desktop restart) was caused by the worker/gateway running `python` as **PID 1** with no init
+to reap exited children. Adding `init: true` to those services in `docker-compose.yml` (Docker injects a tiny
+init that forwards signals + reaps zombies) would prevent a recurrence. Left as a documented follow-up, not
+implemented this session — it is infra hardening orthogonal to the H1→H3 reliability work and wants its own
+card + a clean-bring-up verification.

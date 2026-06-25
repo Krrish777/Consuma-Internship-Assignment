@@ -577,8 +577,20 @@
         "[L4] uv run pytest -m e2e tests/e2e/test_semaphore.py (3-slot global limit still holds with the reaper loop live)",
         "make check (ruff+fmt+mypy+unit green)"
       ],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "TDD: tests/unit/test_reaper.py written first (RED — ImportError: cannot import run_reaper), then run_reaper implemented (GREEN -> 4 passed: sleeps before first pass with the configured interval, reaps each pass, swallows a failing pass, cancellable). Added run_reaper to worker/maintenance.py (sleep-first loop calling semaphore.reap(), swallow-and-continue, mirrors run_reseeder/run_sweeper); wired as a 2nd asyncio.Task alongside the reseeder in worker.main run(), both cancelled on shutdown; added Settings.REAP_INTERVAL_S=30. make check green: ruff+fmt, mypy --strict, 121 unit (later 125 with H3). L3: uv run pytest tests/integration/test_redis.py -k reap -> 3 passed locally (the X5 reclaim tests — reap() semantics unchanged; incl. test_reap_leaves_a_live_heartbeating_holder_alone, so the reaper can't disturb a live holder). L4: verified on a clean GitHub Codespace (local Docker Desktop wedged on an unkillable zombie container mid-session) — uv run pytest -m e2e tests/e2e/test_semaphore.py -> 1 passed (117s): the global 3-slot limit still holds with BOTH maintenance loops (reseeder + reaper) live, confirming the owner-checked reaper never breaches Constraint A. The new behavior is purely scheduling an already-L3-proven primitive. commit 3e61efe (user handles git)."
+    },
+    {
+      "id": "H-PURGE",
+      "rung": 5,
+      "behavior": "H3 — fold processed_events retention (H10/H3) into the gateway reconciler loop. purge_processed_events(session, older_than_seconds) (core/infra/db.py, DB-side now() cutoff) is L3-proven (R4inbox) but was NEVER scheduled, so the processed_events idempotency inbox grows unbounded. Fix: add purge_once(engine, retention_s) to gateway/sweeper.py (opens a session, calls purge_processed_events, commits explicitly since get_session does not auto-commit) and call it from run_sweeper each pass alongside sweep_once, each wrapped in its own try so a failure in one never skips the other (re-publish and retention are independent). sweep_once stays re-publish-only (the deliberate G8 decision). run_sweeper gains a retention_s param wired from Settings.PROCESSED_EVENTS_RETENTION_S in the gateway lifespan. MUST: rows older than the retention window are deleted, fresh rows kept; the inbox stops growing unbounded. MUST NOT: alter sweep_once's re-publish-only contract or delete rows within retention.",
+      "verification": [
+        "[L2] uv run pytest tests/unit/test_sweeper_loop.py (run_sweeper runs sweep_once AND purge_once each pass, with the configured retention_s; a failure in either does not skip the other or kill the loop)",
+        "[L3] uv run pytest tests/integration/test_sweeper.py -k purge (purge_once deletes an aged inbox row, keeps a fresh one and one within retention)",
+        "make check (ruff+fmt+mypy+unit green)"
+      ],
+      "status": "passing",
+      "evidence": "TDD: tests/unit/test_sweeper_loop.py written first, then RED proven by temporarily disabling the purge_once call in run_sweeper -> all 4 loop tests failed (purge.await_count 0), then restored -> GREEN (4 passed: sweep+purge each pass, purge uses the configured retention_s, a purge failure doesn't skip the sweep and vice-versa, loop survives both). Added purge_once to gateway/sweeper.py (session + purge_processed_events + explicit commit) called alongside sweep_once in run_sweeper (separate try blocks); run_sweeper gained retention_s, wired from Settings.PROCESSED_EVENTS_RETENTION_S in gateway/main.py lifespan; sweep_once left untouched (G8 re-publish-only). make check green: ruff+fmt, mypy --strict, 125 unit (121 + 4). L3: verified on a clean GitHub Codespace (local Docker wedged mid-session) — uv run pytest tests/integration/test_sweeper.py -k purge -> 2 passed, 4 deselected (42s): an aged processed_events row (consumed_at backdated via DB-side now()-interval) is deleted at retention_s=100; a fresh row and a row within a 3600s window are kept. Implemented under the user's 'do the rest of the stuff' directive while H-REAP awaited its Docker-gated L4; both verified together on the Codespace. commit 3e61efe (user handles git)."
     }
   ]
 }

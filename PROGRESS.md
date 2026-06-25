@@ -4,10 +4,21 @@
 > Structured feature status lives in `feature_list.json` (see CLAUDE.md). Decisions: `docs/DECISIONS.md` + `docs/SPEC.md §4, §6`.
 
 ## Current State
-- Phase: **Phase 8 — Architecture-defense docs COMPLETE** (docs/features/08-docs.md fully exhausted).
-  **ALL PHASES (0–8) COMPLETE.** Phases 0–7 complete.
-- Active card: **none** — DOC1 + DOC2 passing; WIP=0. **65/65 features passing**, 0 in_progress.
+- Phase: **ALL PHASES (0–8) COMPLETE** + the **optional-hardening backlog (H1/H2/H3) COMPLETE**.
+- Active card: **none** — WIP=0. **68/68 features passing**, 0 in_progress.
   check-wip.py + check-evidence.py exit 0.
+- **Optional hardening (H1→H3, one at a time, WIP=1, TDD; commit `3e61efe`):** closed the leftover
+  resilience/retention gaps after FEATURES.md was exhausted. **The H1 re-seed approach was chosen WITH the
+  user** (periodic loop over reconnect-hook/bounded-BLPOP/AOF). All three Docker-gated layers were verified on
+  a **clean GitHub Codespace** after the local Docker Desktop wedged mid-session on an unkillable zombie
+  container (worker runs `python` as PID 1 with no init — see the `init: true` follow-up in DECISIONS).
+  - **H1 / H-RESEED** — `run_reseeder` re-seeds `tts:slots` if Redis is wiped (was boot-only → a wipe stranded
+    `acquire()` on an empty BLPOP forever). Marker-guarded → no-op on a healthy pool. L4 `test_edge_cases.py
+    -k redis_wipe` green + attribution proof (pool self-heals 0→3 with no job running).
+  - **H2 / H-REAP** — `run_reaper` schedules the (L3-proven) `Semaphore.reap()` so a crashed mid-TTS holder's
+    slot returns without a reboot. L4 `test_semaphore.py` → 1 passed (3-slot limit holds with both loops live).
+  - **H3 / H-PURGE** — `purge_once` folds `processed_events` retention into `run_sweeper` (was never scheduled
+    → inbox grew unbounded). `sweep_once` left re-publish-only (G8). L3 `test_sweeper.py -k purge` → 2 passed.
 - **Phase 8 highlights (TDD throughout — guard test RED before each doc edit):**
   - **DOC1** rewrote `docs/SPEC.md §4` so the source of truth matches the built code (it predated the
     2026-06-24 arch review and *taught* several S0/S1 bugs). 7 corrections: x-death.count gating →
@@ -34,8 +45,8 @@
   (2) nothing created the schema in the compose Postgres (`init.sh` never migrated; no real Alembic migration
   exists) → `POST /jobs` 500'd `relation "jobs" does not exist` → added idempotent `create_tables` to the
   gateway lifespan (single schema owner). The real `./init.sh` deployment now works end-to-end.
-- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict + **113 unit tests**
-  (106 + 3 DOC1 spec-consistency + 4 DOC2 architecture-doc guards).
+- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict + **125 unit tests**
+  (113 + 4 reseeder [H1] + 4 reaper [H2] + 4 sweeper-loop [H3] guards).
 - Integration tests (Docker up, real pg+rmq+redis+minio): per-card L3 all green —
   **Phase 5:** stats 3, ingestion 9 (incl. 2 H13), sweeper 4; full gateway trio (ingestion+stats+sweeper)
   16 passed with the sweeper task live in the lifespan (no regression).
@@ -193,33 +204,35 @@
 Phases 0–5 built (foundation, domain logic, Redis coordination, DB query layer, worker pipeline, gateway
 completion). The full parse→TTS→stitch choreography + DLQ resolver + webhook + /stats + PENDING-sweeper now
 run end-to-end at L3. Remaining:
-- **Still deferred (optional primitives, not yet scheduled):** `Semaphore.reap()` (worker-side lease reaper)
-  and `purge_processed_events()` (H10 inbox retention) remain primitives — nothing calls them periodically.
-  G8's `run_sweeper` was kept to re-publish only (every added line tested); folding retention into it is the
-  documented optional follow-up. `reap()` belongs in the worker bootstrap, not the gateway sweeper.
+- **Idle primitives — now SCHEDULED (H2/H3, commit 3e61efe):** `Semaphore.reap()` runs via `run_reaper` and
+  `purge_processed_events()` runs via `purge_once` inside `run_sweeper`. Both were L3-proven primitives that
+  nothing called periodically; they are now wired (reaper in the worker, purge in the gateway sweeper, each
+  with its own test). `sweep_once` is still re-publish-only (G8).
 - Phase 6 L4 e2e/behavior probes: **DONE** (all passing; `uv run pytest -m e2e` → 14 passed).
 - Phase 7 Infra verification: **DONE** (I1–I4, H-DANGLE, H-PREFETCH all passing).
 - Phase 8 Architecture-defense docs: **DONE** (DOC1 corrected SPEC §4 + 7 DECISIONS entries; DOC2 =
   `ARCHITECTURE.md`). **No remaining phases — the FEATURES.md ladder is fully exhausted.**
-- **Resilience follow-up (found in Phase 6 E-EDGE; now also documented in ARCHITECTURE.md §5 as a known
-  limit):** a Redis bounce strands the TTS semaphore (Redis has no volume; `ensure_slots` is boot-only).
-  Fix = re-seed on Redis-reconnect, or a periodic seed/reaper, or AOF. Remains the top optional follow-up.
+- **Resilience follow-up — now CLOSED (H1, commit 3e61efe):** the Redis-bounce gap (Redis has no volume;
+  `ensure_slots` was boot-only) is fixed by `run_reseeder` (periodic, marker-guarded re-seed). Was the top
+  optional follow-up; ARCHITECTURE.md §5 supersession noted in DECISIONS.
 
 ## Next Steps
-**All FEATURES.md phases complete (0–8).** No required work remains. The repo is in a clean, fully-passing
-state (113 unit green, all L3/L4 probes green per their cards, hooks exit 0, WIP=0). Remaining items are all
-**optional hardening**, none required by the spec:
-1. **Redis-bounce semaphore re-seed** (the one real resilience gap, documented in ARCHITECTURE.md §5 +
-   DECISIONS "Phase 6"): re-seed `ensure_slots` on Redis-reconnect, or a periodic seed/reaper, or an AOF volume.
-2. **Schedule the idle primitives:** `Semaphore.reap()` in the worker bootstrap; fold
-   `purge_processed_events()` (H10 inbox retention) into `run_sweeper`.
+**All FEATURES.md phases complete (0–8) AND the optional-hardening backlog (H1/H2/H3) complete.** No required
+work remains. Repo is clean and fully passing (125 unit green; H1/H2/H3 Docker-gated layers verified on a clean
+GitHub Codespace; hooks exit 0; WIP=0; 68/68). Remaining candidates, all optional and none spec-required:
+1. **`init: true` on worker/gateway compose services** — the only newly-surfaced item: prevents the
+   PID-1-zombie daemon wedge that broke local Docker this session (see DECISIONS follow-up). Wants its own card.
+2. **Comprehensive Docker sweep** (recommended on the Codespace): `make check-all` (full DoD = test-int + e2e +
+   behavior) to re-confirm H1/H2/H3 didn't regress any of the 14 probes in one run.
 3. Await user direction for anything beyond the FEATURES.md scope.
 
 ## Known Issues / Gaps
-- **⚠ Redis-bounce strands the TTS semaphore (found Phase-6 E-EDGE):** compose Redis has no volume and
-  `Semaphore.ensure_slots` runs only on worker boot, so `docker restart redis` wipes `tts:slots` + the init
-  marker and a running worker never re-seeds → BLPOP blocks forever. Deliberately not probed (would hang).
-  Fix: re-seed on Redis-reconnect / periodic seed / AOF volume. See DECISIONS 2026-06-25 "Phase 6".
+- **Redis-bounce semaphore gap: CLOSED (H1).** `run_reseeder` re-seeds `tts:slots` periodically (marker-guarded),
+  so a `docker restart redis`/FLUSHALL no longer strands the pool. Was the standing Phase-6 E-EDGE gap.
+- **Local Docker Desktop wedged this session (environment, not code):** an unkillable zombie container
+  (`PID … is zombie and can not be killed`) blocked `docker compose down`/`rm -f`; required a Docker Desktop
+  restart, after which the engine still struggled, so H1/H2/H3 Docker verification moved to a GitHub Codespace.
+  Root cause = worker/gateway run `python` as PID 1 with no init; fix = `init: true` (DECISIONS follow-up).
 - **Deploy fixes (Phase 6):** `httpx>=0.27` added to `services/worker` deps (was crash-looping); gateway
   lifespan now runs idempotent `create_tables` on startup (compose Postgres had no schema; no real Alembic
   migration exists — `metadata.create_all` is the accepted simulation simplification). See DECISIONS "Phase 6".
@@ -233,10 +246,9 @@ state (113 unit green, all L3/L4 probes green per their cards, hooks exit 0, WIP
   {parse,tts,stitch,dlq}.py` + `bootstrap.py`/`dispatch.py`/`errors.py`/`ssrf.py` are all wired and L3-tested.
   The parse handler wraps `simulate_parse` with `await asyncio.sleep(0)` (latency stand-in; fault logic stays
   pure in core/domain).
-- **Reaper/retention still not scheduled:** the gateway PENDING-sweeper (G8) IS now scheduled (asyncio.Task
-  in the lifespan), but `build_context` still calls `Semaphore.reap()` / `purge_processed_events()` nowhere
-  periodically — they remain tested primitives awaiting a scheduler (reap in the worker bootstrap; purge
-  optionally folded into `run_sweeper`). G8 deliberately re-publishes only, so every added line stayed tested.
+- **Reaper/retention: now scheduled (H2/H3).** `Semaphore.reap()` runs in the worker via `run_reaper`
+  (`worker/maintenance.py`, alongside the H1 `run_reseeder`); `purge_processed_events()` runs in the gateway via
+  `purge_once` inside `run_sweeper`. `sweep_once` itself is still re-publish-only (the G8 decision holds).
 - **Known edge (W7/B4):** `complete_task_and_decrement` guards only `status != 'DONE'`; a DLQ-failed task
   followed by a late TTS success could double-decrement (harmless — StitchReady already fired). The realistic
   flow can't hit it; left B4 untouched rather than refactor a passing card. See DECISIONS 2026-06-25 "Phase 4".
