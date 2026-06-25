@@ -552,8 +552,8 @@
         "[L1] manual read; every named mechanism exists in code and has a green probe (cross-checked against feature_list.json passing cards + tests/e2e)",
         "a tiny guard test that ARCHITECTURE.md exists and contains the required sections + the honest-limits disclaimer"
       ],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "Created ARCHITECTURE.md (repo root): 5 sections — (1) data-placement table with a one-sentence boundary defense each (Postgres=durable truth, Redis=ephemeral coordination, MinIO=bytes content-addressed, RabbitMQ=pointers never payloads); (2) fan-in barrier (atomic UPDATE...RETURNING not a Python counter; idempotency authority = durable conditional tasks.status UPDATE not Redis SETNX, H3); (3) the FOUR SEAMS (gateway/parse/tts/stitch) each with crash window + converging mechanism (ack-last, PENDING-sweeper, re-publishable parse, B4+H-EMIT, FSM CAS short-circuit) + DLQ<->fan-in rule, each mapped to a NAMED passing probe; (4) exactly-once EFFECT = at-least-once delivery + idempotent processing (explicitly NOT exactly-once delivery); (5) honest limits (soft semaphore X5, Redis-bounce gap, H8 implemented, create_tables vs Alembic, webhook L3-only, B4 micro-edge). Closed the two deferrals: H-DANGLE invariant stated (deferred from H-DANGLE) + Redis-bounce gap stated. TDD: tests/unit/test_architecture_doc.py written first (RED, file missing) then doc (GREEN) -> 4 passed (exists; all required sections incl soft-semaphore+honest-limits; at-least-once stated + 'not exactly-once' disclaimer present + no 'guarantees exactly-once delivery' claim; seams cite real probe files). Every cited probe verified to exist (e2e: test_crash_recovery/test_duplicate_delivery/test_cache_fanin/test_poison_pill/test_stitch_webhook/test_behavior; integration: test_sweeper/test_parse/test_stitch/test_webhook/test_redis). make check green: ruff+fmt clean, mypy --strict, 113 unit passed (109 + 4 new). depends_on DOC1 (passing). commit 700e587 base (uncommitted; user handles git)."
     }
   ]
 }

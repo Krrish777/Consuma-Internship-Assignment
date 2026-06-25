@@ -4,10 +4,23 @@
 > Structured feature status lives in `feature_list.json` (see CLAUDE.md). Decisions: `docs/DECISIONS.md` + `docs/SPEC.md §4, §6`.
 
 ## Current State
-- Phase: **Phase 7 — Infra verification & hygiene COMPLETE** (docs/features/07-infra.md fully exhausted).
-  Phases 0–6 complete.
-- Active card: **none** — all Phase-7 cards passing (I1, I2, I3, I4, H-DANGLE, H-PREFETCH); WIP=0.
+- Phase: **Phase 8 — Architecture-defense docs COMPLETE** (docs/features/08-docs.md fully exhausted).
+  **ALL PHASES (0–8) COMPLETE.** Phases 0–7 complete.
+- Active card: **none** — DOC1 + DOC2 passing; WIP=0. **65/65 features passing**, 0 in_progress.
   check-wip.py + check-evidence.py exit 0.
+- **Phase 8 highlights (TDD throughout — guard test RED before each doc edit):**
+  - **DOC1** rewrote `docs/SPEC.md §4` so the source of truth matches the built code (it predated the
+    2026-06-24 arch review and *taught* several S0/S1 bugs). 7 corrections: x-death.count gating →
+    `x-retry-count` header (H-XDEATH); fan-in idempotency = conditional `tasks.status` UPDATE not Redis
+    SETNX (H3); parse = re-publishable emitter never inbox-skipped (H2/H15); + new bullets for the
+    PENDING-sweeper (H1), DLQ↔fan-in rule (H4), stitch idempotency + FSM CAS (H5/H-FSM), and the
+    SSRF/manuscript-size/block-count security notes (H-SSRF/H13/H14). 7 dated per-correction entries
+    appended to `docs/DECISIONS.md` (append-only). Pinned by `tests/unit/test_spec_consistency.py` (3).
+  - **DOC2** created `ARCHITECTURE.md` (repo root): data-placement table + fan-in section + the
+    **four-seam transactional story** (gateway/parse/tts/stitch crash windows → converging mechanism,
+    each mapped to a named passing probe) + exactly-once *effect* (NOT delivery) + honest limits.
+    Closed the two deferrals (H-DANGLE invariant; Redis-bounce gap). Guarded by
+    `tests/unit/test_architecture_doc.py` (4).
 - **Phase 7 highlights:** hardened the MinIO healthcheck (`mc ready local`, first-party, :latest-robust)
   and ADDED a missing gateway healthcheck (python3 urllib `/health`) so "all services healthy" is truthful;
   added a guarded+bounded one-job e2e smoke to `init.sh` (which exposed the gateway-healthcheck race);
@@ -21,7 +34,8 @@
   (2) nothing created the schema in the compose Postgres (`init.sh` never migrated; no real Alembic migration
   exists) → `POST /jobs` 500'd `relation "jobs" does not exist` → added idempotent `create_tables` to the
   gateway lifespan (single schema owner). The real `./init.sh` deployment now works end-to-end.
-- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict (67 files) + 106 unit tests.
+- `make check` (L1 static + L2 unit): **GREEN** — ruff + ruff format + mypy --strict + **113 unit tests**
+  (106 + 3 DOC1 spec-consistency + 4 DOC2 architecture-doc guards).
 - Integration tests (Docker up, real pg+rmq+redis+minio): per-card L3 all green —
   **Phase 5:** stats 3, ingestion 9 (incl. 2 H13), sweeper 4; full gateway trio (ingestion+stats+sweeper)
   16 passed with the sweeper task live in the lifespan (no regression).
@@ -160,8 +174,20 @@
       channels). [L1] prefetch unit test (2); [L4] R3.1 bounded redelivery re-confirmed; docstring now explains
       why parse/stitch keep the larger prefetch (they never block on a scarce leased resource).
 
+### Phase 8 — Architecture-defense docs (all passing) — base 700e587
+- [x] DOC1 — corrected `docs/SPEC.md §4` (it predated the arch review and taught S0/S1 bugs): 7 corrections
+      (x-death→`x-retry-count` H-XDEATH; fan-in idempotency = conditional `tasks.status` UPDATE not Redis SETNX
+      H3; parse = re-publishable emitter never inbox-skipped H2/H15; + PENDING-sweeper H1, DLQ↔fan-in H4, stitch
+      idempotency+FSM CAS H5/H-FSM, SSRF/manuscript-size/block-count H-SSRF/H13/H14). 7 dated entries appended
+      to `docs/DECISIONS.md` (append-only). Pinned by `tests/unit/test_spec_consistency.py` (3 tests).
+- [x] DOC2 — created `ARCHITECTURE.md` (repo root): data-placement table (one-sentence boundary defense each) +
+      fan-in section + the four-seam transactional story (gateway/parse/tts/stitch crash window → converging
+      mechanism, each mapped to a named passing probe) + exactly-once *effect* (not delivery) + honest limits
+      (soft semaphore X5, Redis-bounce gap, H8, create_tables, webhook L3-only, B4 micro-edge). Closed the two
+      deferrals (H-DANGLE invariant; Redis-bounce gap). Guarded by `tests/unit/test_architecture_doc.py` (4).
+
 ## In Progress
-- **none** — WIP=0. Phases 0–7 complete. Next (and final) phase is Phase 8 (architecture-defense docs).
+- **none** — WIP=0. **All phases (0–8) complete.** No further FEATURES.md cards remain.
 
 ## What's Genuinely Unbuilt (FEATURES.md scope)
 Phases 0–5 built (foundation, domain logic, Redis coordination, DB query layer, worker pipeline, gateway
@@ -173,18 +199,21 @@ run end-to-end at L3. Remaining:
   documented optional follow-up. `reap()` belongs in the worker bootstrap, not the gateway sweeper.
 - Phase 6 L4 e2e/behavior probes: **DONE** (all passing; `uv run pytest -m e2e` → 14 passed).
 - Phase 7 Infra verification: **DONE** (I1–I4, H-DANGLE, H-PREFETCH all passing).
-- Phase 8 Architecture-defense docs: DOC1 (correct SPEC §4 + log the 7 corrections), DOC2 (`ARCHITECTURE.md`).
-  **This is the only remaining phase.**
-- **Resilience follow-up (found in Phase 6 E-EDGE):** a Redis bounce strands the TTS semaphore (Redis has no
-  volume; `ensure_slots` is boot-only). Fix = re-seed on Redis-reconnect, or a periodic seed/reaper, or AOF.
+- Phase 8 Architecture-defense docs: **DONE** (DOC1 corrected SPEC §4 + 7 DECISIONS entries; DOC2 =
+  `ARCHITECTURE.md`). **No remaining phases — the FEATURES.md ladder is fully exhausted.**
+- **Resilience follow-up (found in Phase 6 E-EDGE; now also documented in ARCHITECTURE.md §5 as a known
+  limit):** a Redis bounce strands the TTS semaphore (Redis has no volume; `ensure_slots` is boot-only).
+  Fix = re-seed on Redis-reconnect, or a periodic seed/reaper, or AOF. Remains the top optional follow-up.
 
 ## Next Steps
-1. **Phase 8 — Architecture-defense docs** (`08-docs.md`): DOC1 corrects SPEC §4 (7 corrections) + appends
-   DECISIONS; DOC2 = `ARCHITECTURE.md` defending each boundary + the four-seam transactional story, each claim
-   mapped to a passing Phase-6 probe and the Phase-7 infra cards. Include the H-DANGLE invariant (deferred from
-   H-DANGLE) and the Redis-bounce gap. High rubric value, cheap to write. **Last phase.**
-2. **Optional follow-ups:** the Redis-bounce semaphore re-seed (below); schedule `Semaphore.reap()` (worker
-   bootstrap) + fold `purge_processed_events()` into `run_sweeper`.
+**All FEATURES.md phases complete (0–8).** No required work remains. The repo is in a clean, fully-passing
+state (113 unit green, all L3/L4 probes green per their cards, hooks exit 0, WIP=0). Remaining items are all
+**optional hardening**, none required by the spec:
+1. **Redis-bounce semaphore re-seed** (the one real resilience gap, documented in ARCHITECTURE.md §5 +
+   DECISIONS "Phase 6"): re-seed `ensure_slots` on Redis-reconnect, or a periodic seed/reaper, or an AOF volume.
+2. **Schedule the idle primitives:** `Semaphore.reap()` in the worker bootstrap; fold
+   `purge_processed_events()` (H10 inbox retention) into `run_sweeper`.
+3. Await user direction for anything beyond the FEATURES.md scope.
 
 ## Known Issues / Gaps
 - **⚠ Redis-bounce strands the TTS semaphore (found Phase-6 E-EDGE):** compose Redis has no volume and
