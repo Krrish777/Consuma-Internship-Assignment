@@ -116,9 +116,7 @@ async def advance_status(session: AsyncSession, job_id: str, to_status: JobStatu
     """
     expected = expected_for(to_status)
     stmt = (
-        update(Job)
-        .where(Job.job_id == job_id, Job.status.in_(expected))
-        .values(status=to_status)
+        update(Job).where(Job.job_id == job_id, Job.status.in_(expected)).values(status=to_status)
     )
     result = cast("CursorResult[Any]", await session.execute(stmt))
     await session.commit()

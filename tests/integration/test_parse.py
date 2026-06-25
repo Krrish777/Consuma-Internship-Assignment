@@ -79,9 +79,7 @@ async def test_parse_fanout(parse_ctx: WorkerContext) -> None:
         assert job.status == JobStatus.GENERATING
         task_ids = {
             t.task_id
-            for t in (
-                await session.execute(select(Task).where(Task.job_id == job_id))
-            ).scalars()
+            for t in (await session.execute(select(Task).where(Task.job_id == job_id))).scalars()
         }
     assert len(task_ids) == 3
 
@@ -110,9 +108,7 @@ async def test_parse_redelivery_is_idempotent(parse_ctx: WorkerContext) -> None:
         job = await session.get(Job, job_id)
         assert job is not None
         assert job.pending_count == 2  # NOT reset to 2-from-fresh nor doubled
-        rows = (
-            await session.execute(select(Task).where(Task.job_id == job_id))
-        ).scalars().all()
+        rows = (await session.execute(select(Task).where(Task.job_id == job_id))).scalars().all()
         assert len(rows) == 2  # still 2, no duplicates
 
 

@@ -86,8 +86,10 @@ async def handle_parse(ctx: WorkerContext, event: JobCreated) -> None:
                 }
                 for i, block in enumerate(blocks)
             ]
-            insert_tasks = pg_insert(Task).values(rows).on_conflict_do_nothing(
-                index_elements=["job_id", "block_index"]
+            insert_tasks = (
+                pg_insert(Task)
+                .values(rows)
+                .on_conflict_do_nothing(index_elements=["job_id", "block_index"])
             )
             await session.execute(insert_tasks)  # no commit — begin_parse commits both
         # begin_parse CAS sets pending_count=N only on the first run (H15) and
