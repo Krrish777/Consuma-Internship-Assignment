@@ -450,8 +450,8 @@
       "rung": 4,
       "behavior": "TTS handler: content-hash cache check BEFORE acquiring a slot (cache hit burns no token); PUT tts/<hash>.wav; SETEX cache. Fan-in via atomic UPDATE...RETURNING -> exactly one worker sees 0 and emits StitchReady.",
       "verification": ["make e2e -k cache (identical block -> no 2nd vendor call) AND -k fan_in (exactly one StitchReady)"],
-      "status": "not_started",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest -m e2e -k cache_fanin -> 1 passed in 18s against the LIVE stack (test_identical_blocks_dedup_to_one_asset_but_fan_in_counts_each), asserting DURABLE DB truth. A 4-block job with blocks 0 and 2 identical text: COMPLETED with 4 Task rows all DONE + pending_count 0 (fan-in counted EVERY task incl. the duplicate -> exactly one StitchReady). Dedup at the vendor: tasks[0].block_hash==tasks[2].block_hash and tasks[0].audio_key==tasks[2].audio_key (identical blocks share ONE content-addressed asset), audio_key==f'tts/{block_hash}.wav' (keyed on content, NEVER task_id -> the cache-vs-counter trap avoided), and distinct blocks have distinct hashes+keys. The pure cost property (vendor synthesises the duplicate only once / burns no slot) is L3-proven with a call counter (test_tts cache). make check green (106 unit). commit 700e587 base (uncommitted; user handles git)."
     },
     {
       "id": "R4.3",
