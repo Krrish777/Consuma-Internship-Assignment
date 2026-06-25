@@ -398,6 +398,14 @@
       "evidence": "Rung-row owner of the parse handler at L3; fully realised by W3 (worker/handlers/parse.py). uv run pytest tests/integration -k 'parse_fanout or zero_block_terminates' -> 2 passed (test_parse_fanout: N blocks -> N tasks + pending_count=N + N TtsRequested; test_zero_block_terminates: 0-block manuscript -> STITCHING/StitchReady, no hang) against the live pg+rmq+redis+minio stack. Same L3 verify as W3 (precedent: G7->R5.1, G8->R3.4 flipped directly). make check green (106 unit, mypy 67 files). commit 700e587 HEAD anchor (user handles git)."
     },
     {
+      "id": "T1",
+      "rung": 3,
+      "behavior": "E2E harness & fixtures (BOM 11-T4): tests/e2e/conftest.py + helpers.py provide the shared L4 scaffolding every probe reuses — a `stack` fixture that ensures the 6-service compose stack is healthy AND running CURRENT code (rebuilds the app images; the pre-Phase-4 image is an idle skeleton that consumes nothing), an httpx client to http://localhost:8000, wait_for_status(job_id, target, timeout) poller, publish_raw(event, queue) duplicate-injector (localhost broker), kill_container/restart docker helpers, and a poison_manuscript() builder. Everything tagged @pytest.mark.e2e so the no-Docker make check stays green.",
+      "verification": ["uv run pytest -m e2e -k harness_smoke (POST a trivial job -> reaches COMPLETED through the live stack)"],
+      "status": "in_progress",
+      "evidence": ""
+    },
+    {
       "id": "R3.1",
       "rung": 3,
       "behavior": "Crash recovery: manual ack LAST (after Postgres commit), prefetch set, NACK->retry path. docker kill mid-job loses no message.",
