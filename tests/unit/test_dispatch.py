@@ -1,4 +1,4 @@
-"""X2 — handler dispatch / DI table (L2, pure; no Docker).
+"""Handler dispatch / DI table (pure; no Docker).
 
 The consume loop is generic: it looks each queue up in this table. The test
 proves the table binds exactly the three pipeline queues to callables, built

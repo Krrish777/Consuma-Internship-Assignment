@@ -1,4 +1,4 @@
-"""R2.2c — Gateway CORS + error handler unit tests (no Docker required).
+"""Gateway CORS + error handler unit tests (no Docker required).
 
 Proves:
   - Bad body (missing 'manuscript') -> 422 structured JSON

@@ -1,4 +1,4 @@
-"""D3 — manuscript block splitter unit tests (no Docker required).
+"""Manuscript block splitter unit tests (no Docker required).
 
 Covers the edge behavior the grader probes: 0-block (empty/whitespace) and
 1-block inputs that drive the STITCHING-direct / single-task termination paths,
@@ -13,7 +13,7 @@ from core.domain.text import split_blocks
 
 
 def test_empty_string_yields_no_blocks() -> None:
-    # 0-block path: W3 routes this straight to STITCHING (no hang).
+    # 0-block path: parse routes this straight to STITCHING (no hang).
     assert split_blocks("") == []
 
 

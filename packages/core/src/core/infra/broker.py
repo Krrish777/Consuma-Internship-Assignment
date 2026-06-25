@@ -1,14 +1,14 @@
-"""aio-pika adapter — connection + topology + publish/consume (spec §5, §7).
+"""aio-pika adapter — connection + topology + publish/consume.
 
 Molded from the kieled FastAPI+aio-pika skeleton, bent to our MUST rules (CLAUDE.md):
   - durable NAMED exchange + durable queues (skeleton: default exchange, auto_delete)
   - publisher confirms ON (skeleton: confirms off)
-  - PERSISTENT messages carrying a pydantic event = pointers, never bytes (spec §7)
+  - PERSISTENT messages carrying a pydantic event = pointers, never bytes
   - MANUAL ack: consume registers with no_ack=False; the handler acks LAST, after its
     Postgres commit + downstream publish. This helper deliberately does NOT auto-ack
     (no `async with message.process()`), because ack-before-publish loses events on crash.
 
-Retry ladder (BACKLOG H-XDEATH, H-TTLHOL, H-REF1/H-REF2):
+Retry ladder:
   - One delay queue PER delay value (q.retry.<stage>.<delay>s) to avoid head-of-line
     blocking from mixed-TTL messages on a single queue.
   - Each delay queue has `x-message-ttl` = delay_ms and dead-letters back to pipeline
@@ -16,7 +16,7 @@ Retry ladder (BACKLOG H-XDEATH, H-TTLHOL, H-REF1/H-REF2):
     queue for another attempt.
   - Retry count is tracked via a custom header `x-retry-count` stamped at publish time.
     NEVER use `x-death.count` — on RabbitMQ ≥3.13 (and 4.x) it is frozen at 1 per
-    queue and breaks retry gating (BACKLOG H-XDEATH).
+    queue and breaks retry gating.
   - After MAX_RETRIES, publish directly to q.dlq.
 
 Raw aio-pika only — no Celery/Taskiq/ARQ/RQ (CLAUDE.md rule #2).
@@ -58,7 +58,7 @@ async def connect(url: str) -> AbstractRobustConnection:
 async def declare_minimal(
     channel: AbstractChannel,
 ) -> tuple[AbstractExchange, AbstractQueue]:
-    """Declare the durable Rung-0 topology: ``pipeline`` exchange + ``q.parse`` bound to it.
+    """Declare the durable minimal topology: ``pipeline`` exchange + ``q.parse`` bound to it.
 
     Idempotent — declaring an already-existing durable entity is a no-op, so every worker
     may call this on boot. Returns (exchange, queue) for publish/consume wiring.
@@ -74,7 +74,7 @@ async def declare_full(
     *,
     retry_delays: tuple[int, ...] = RETRY_DELAYS,
 ) -> AbstractExchange:
-    """Declare the full Rung-2 topology (R2.1).
+    """Declare the full topology.
 
     Topology layout:
       pipeline (direct exchange)
@@ -83,8 +83,8 @@ async def declare_full(
         → q.retry.<queue>.<delay>s     (one per delay per live queue, uniform TTL)
                                         expires → back to pipeline/q.<stage>
 
-    BACKLOG H-TTLHOL: separate delay queue per delay value → no head-of-line blocking.
-    BACKLOG H-XDEATH: retry count in custom header `x-retry-count`, not `x-death.count`.
+    Separate delay queue per delay value → no head-of-line blocking.
+    Retry count in custom header `x-retry-count`, not `x-death.count`.
     """
     exchange = await channel.declare_exchange(EXCHANGE, aio_pika.ExchangeType.DIRECT, durable=True)
 
@@ -167,8 +167,8 @@ async def route_retry_or_dlq(
     Call this from exception handlers BEFORE acking the original message.
     The caller still owns the ack/nack after this returns.
 
-    BACKLOG H-XDEATH: uses x-retry-count custom header, not x-death.count.
-    BACKLOG H-TTLHOL: one delay queue per delay — no HOL blocking.
+    Uses x-retry-count custom header, not x-death.count.
+    One delay queue per delay — no HOL blocking.
     """
     count = get_retry_count(message) + 1
     if count > max_retries:

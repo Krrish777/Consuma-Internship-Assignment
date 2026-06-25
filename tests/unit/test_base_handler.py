@@ -1,6 +1,6 @@
-"""W2 — ack-last handler skeleton (L2, pure; no Docker).
+"""Ack-last handler skeleton (L2, pure; no Docker).
 
-The single most important ordering in the system (SPEC §4): do work → COMMIT →
+The single most important ordering in the system: do work → COMMIT →
 PUBLISH → ACK. Ack dead last. These tests drive the three branches of the
 ``ack_last`` wrapper with a fake message and assert the ack is the LAST awaited
 call on every path:

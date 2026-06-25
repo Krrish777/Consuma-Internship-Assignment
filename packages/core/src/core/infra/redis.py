@@ -60,7 +60,7 @@ return 1
 """
 
 
-# Atomic, owner-safe reclaim of one orphaned token (X5). KEYS[1]=slots list,
+# Atomic, owner-safe reclaim of one orphaned token. KEYS[1]=slots list,
 # KEYS[2]=lease key, ARGV[1]=token. Returns the token to the pool ONLY if its lease
 # is gone (holder dead/expired) AND it is not already in the pool — so two reapers
 # racing the same token return it at most once (the second sees it already present).
@@ -84,7 +84,7 @@ def get_redis(url: str) -> Redis:
 
     ``decode_responses=False`` keeps everything as bytes: we store and byte-compare
     sha256 hashes and opaque semaphore tokens, where silent str decoding would only
-    get in the way. Build the client ONCE and share it (X3 worker bootstrap) — never
+    get in the way. Build the client ONCE and share it (worker bootstrap) — never
     one client per operation. ``from_url`` returns a client immediately; it is NOT
     awaited.
     """
@@ -115,24 +115,24 @@ class Semaphore:
 
     Bounds TTS concurrency to ``slots`` *across all workers/containers*, which an
     in-process ``asyncio.Semaphore`` cannot do. The pool is a Redis list pre-seeded
-    with N opaque tokens (X4 seeds it exactly-once):
+    with N opaque tokens (seeded exactly-once):
 
       - **acquire** = ``BLPOP`` the slots list. Atomically removes one token or
         *blocks* until one is released — no busy-poll, and the count can never go
         negative (you can't pop an empty list). The popped token is then recorded
         as a TTL **lease** (``tts:lease:<token>``) so a crashed holder's slot can be
-        reclaimed by the X5 reaper instead of leaking forever.
+        reclaimed by the reaper instead of leaking forever.
       - **release** = delete the lease, then ``RPUSH`` the token back. Order matters:
         clearing the lease *before* returning the token guarantees the next acquirer's
         ``SET ... NX`` on the lease key succeeds.
 
-    Callers MUST check the content cache BEFORE ``acquire`` (W4 order) — a cache hit
-    must not burn a token (SPEC §4).
+    Callers MUST check the content cache BEFORE ``acquire`` — a cache hit
+    must not burn a token.
 
-    Soft limit (H6 honesty): this is a *best-effort* global limit, not a perfectly
+    Soft limit (honesty): this is a *best-effort* global limit, not a perfectly
     hard one — a distributed semaphore cannot be hard without consensus. A live-but-
     slow holder is protected by a heartbeat that renews its lease at ⅓-TTL; a dead
-    holder's lease expires and the X5 reaper returns its token. In the rare window
+    holder's lease expires and the reaper returns its token. In the rare window
     where a healthy holder stalls past its (heartbeated) TTL, a reap can briefly
     allow slots+1 concurrent — ``reap`` logs such reclaims so breaches are visible.
     """
@@ -183,7 +183,7 @@ class Semaphore:
         if raw is None:
             return None
         token = _as_str(raw[1])
-        # Record the lease so a crashed holder's slot auto-expires (H6 / X5)...
+        # Record the lease so a crashed holder's slot auto-expires...
         await self._client.set(self._lease_key(token), owner, nx=True, ex=self.lease_ttl)
         # ...and keep it alive while we hold it, so a slow-but-healthy holder is
         # never reclaimed out from under itself.
@@ -260,13 +260,13 @@ class Cache:
     """Content-hash TTS cache (Constraint B: cost-idempotency).
 
     Maps ``tts:cache:<sha256(text)>`` -> the prior MinIO object URL/key, with a TTL.
-    Identical text synthesised twice must NOT re-hit the vendor (SPEC §1): the W4
-    handler consults this BEFORE acquiring a semaphore slot, so a hit burns no token.
+    Identical text synthesised twice must NOT re-hit the vendor: the handler
+    consults this BEFORE acquiring a semaphore slot, so a hit burns no token.
 
-    Keyed on D4's canonical ``content_hash(text)``, never the task_id — conflating
+    Keyed on the canonical ``content_hash(text)``, never the task_id — conflating
     the cost cache with the fan-in counter is the named junior trap. This is NOT
     durable truth: it is rebuildable from MinIO and TTL'd, and the TTL MUST stay
-    <= the MinIO object lifetime so a HIT never returns a dangling key (H-DANGLE).
+    <= the MinIO object lifetime so a HIT never returns a dangling key.
     """
 
     def __init__(
@@ -300,7 +300,7 @@ class Cache:
         await self._client.set(self._key(content_hash), url, ex=self.ttl)
 
     async def acquire_inflight(self, content_hash: str, owner: str) -> bool:
-        """Try to become the single synthesiser for this content hash (H8).
+        """Try to become the single synthesiser for this content hash.
 
         ``SET tts:inflight:<hash> owner NX EX`` — returns True only for the first
         caller of a concurrent identical-block burst; that caller synthesises while

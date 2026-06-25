@@ -1,4 +1,4 @@
-"""R4.2 — cache + fan-in probe (L4): dedup at the vendor, not at the counter.
+"""Cache + fan-in probe: dedup at the vendor, not at the counter.
 
 Two identical blocks in one job share a content hash, so they resolve to ONE
 content-addressed TTS asset (``tts/<block_hash>.wav``) — the cache/hash is keyed
@@ -9,7 +9,7 @@ cache key with the counter would either drop a decrement (job hangs) or share a
 counter slot (early, incomplete completion).
 
 The pure cost property ("the vendor synthesizes the duplicate only once / burns no
-slot") is L3-proven with a call counter (test_tts cache); here we assert the
+slot") is proven with a call counter (test_tts cache); here we assert the
 durable, externally-observable consequences: matching content-addressed keys for
 the duplicates, distinct keys for distinct blocks, and a correct fan-in.
 """

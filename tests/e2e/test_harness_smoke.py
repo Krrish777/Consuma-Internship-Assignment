@@ -1,9 +1,9 @@
-"""T1 harness smoke (L4) — the e2e harness proving itself.
+"""Harness smoke — the e2e harness proving itself.
 
 A trivial job submitted to the *live* compose stack must travel
 gateway → broker → worker (parse → tts → stitch) and reach COMPLETED. If this
 passes, the shared fixtures (`stack` health, `client`, `wait_for_status`) work
-and every downstream probe (R3.x/R4.x/E-EDGE/T-BEHAVIOR) can build on them.
+and every downstream probe can build on them.
 
 Tagged ``e2e`` so the no-Docker ``make check`` skips it; runs under ``make e2e``.
 """

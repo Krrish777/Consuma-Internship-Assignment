@@ -1,16 +1,16 @@
-"""R2.0 — Vendor simulation / fault injection unit tests (pure, no Docker).
+"""Vendor simulation / fault injection unit tests (pure, no Docker).
 
 Proves:
   - rate=0.0 never raises; rate=1.0 always raises VendorError
   - fixed rng seed -> reproducible failure decision
   - POISON_MARKER always raises VendorError regardless of failure_rate, and it is
     the SAME retryable type as a transient 500 (consistently-failing -> retry
-    ladder -> DLQ after 3, per SPEC §1; NOT a distinct non-retryable error)
-  - on success, simulate_parse returns the canonical D3 paragraph blocks
-  - tts_fake_audio is deterministic and keyed on the canonical D4 content hash
+    ladder -> DLQ after 3; NOT a distinct non-retryable error)
+  - on success, simulate_parse returns the canonical paragraph blocks
+  - tts_fake_audio is deterministic and keyed on the canonical content hash
 
-Block-splitting behavior is owned by D3 (tests/unit/test_text.py) and content
-hashing by D4 (tests/unit/test_hash.py) — not re-tested here.
+Block-splitting behavior is owned by tests/unit/test_text.py and content
+hashing by tests/unit/test_hash.py — not re-tested here.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def test_poison_marker_always_raises_regardless_of_rate() -> None:
 
 
 def test_poison_is_same_retryable_type_as_transient() -> None:
-    # SPEC §1: poison is consistently-failing -> DLQ AFTER 3 retries, NOT a
+    # Poison is consistently-failing -> DLQ AFTER 3 retries, NOT a
     # distinct non-retryable error. Same exception type as a transient 500, so a
     # single handler routes both through the retry ladder.
     with pytest.raises(VendorError):
@@ -94,7 +94,7 @@ def test_clean_text_rate_zero_returns_blocks() -> None:
     assert simulate_parse(clean, failure_rate=0.0) == [clean]
 
 
-# ── delegation to the D3/D4 canonical primitives ──────────────────────────────
+# ── delegation to the canonical primitives ──────────────────────────────
 
 
 def test_simulate_parse_returns_d3_paragraph_blocks() -> None:

@@ -1,6 +1,6 @@
-"""R1.4 — event contract tests (pure, no Docker).
+"""Event contract tests (pure, no Docker).
 
-Proves the broker payloads (spec §7): pointers/keys only, every event carries a
+Proves the broker payloads: pointers/keys only, every event carries a
 unique defaulted ``event_id`` for idempotency, and events are immutable once built.
 """
 

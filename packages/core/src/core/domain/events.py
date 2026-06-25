@@ -1,4 +1,4 @@
-"""Message contracts (pydantic) — broker payloads carry pointers, never bytes (spec §7).
+"""Message contracts (pydantic) — broker payloads carry pointers, never bytes.
 
 The broker transports **events**, not data. Every field is a string key/identifier; the
 actual bytes live in MinIO and are fetched by key on the consuming side. Each event carries
@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 def _new_event_id() -> str:
-    """Fresh idempotency key. uuid4 → str so the contract is bytes-free (spec §7)."""
+    """Fresh idempotency key. uuid4 → str so the contract is bytes-free."""
     return uuid.uuid4().hex
 
 

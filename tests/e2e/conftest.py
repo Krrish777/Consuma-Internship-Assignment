@@ -98,7 +98,7 @@ def wait_for_status(
 async def publish_raw(
     stack: str,
 ) -> AsyncIterator[Callable[..., Awaitable[None]]]:
-    """Inject a raw event onto a live queue — the duplicate-delivery injector (R3.2).
+    """Inject a raw event onto a live queue — the duplicate-delivery injector.
 
     Opens its own connection to the host-mapped RabbitMQ and declares the same
     topology the worker uses (idempotent), so a probe can re-publish a second copy
@@ -139,7 +139,7 @@ async def db_engine(stack: str) -> AsyncIterator[AsyncEngine]:
 async def redis_client(stack: str) -> AsyncIterator[Redis]:
     """A Redis client to the compose Redis for inspecting coordination state.
 
-    R4.1 reads the global TTS slot pool (``tts:slots``) to prove the semaphore is
+    The probe reads the global TTS slot pool (``tts:slots``) to prove the semaphore is
     shared across scaled workers (exactly ``TTS_CONCURRENCY`` tokens, not N×).
     """
     from core.infra.redis import get_redis
@@ -155,7 +155,7 @@ async def redis_client(stack: str) -> AsyncIterator[Redis]:
 def minio_client(stack: str) -> Minio:
     """A MinIO client to the compose object store for asserting stored bytes.
 
-    T-BEHAVIOR fetches ``raw/``, ``tts/`` and ``out/`` objects to prove the
+    The behavior probe fetches ``raw/``, ``tts/`` and ``out/`` objects to prove the
     produced asset is correct and the stores agree. The async storage helpers wrap
     this sync client in ``to_thread``.
     """

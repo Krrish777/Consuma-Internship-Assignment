@@ -1,11 +1,11 @@
-"""R3.2 — duplicate-delivery probe (L4): the same event twice → exactly-once effect.
+"""Duplicate-delivery probe: the same event twice → exactly-once effect.
 
 At-least-once delivery means any event can arrive twice. The system must absorb
 that with no corruption:
 
   * a duplicate ``JobCreated`` → parse's ``ON CONFLICT DO NOTHING`` on task rows +
     ``begin_parse`` CAS (counter seeded once) → NO extra task rows, counter intact;
-  * a duplicate ``TtsRequested`` for an already-DONE task → B4's conditional claim
+  * a duplicate ``TtsRequested`` for an already-DONE task → the conditional claim
     (``UPDATE … WHERE status <> 'DONE'``) no-ops → NO second decrement → the fan-in
     counter never goes negative and no spurious early completion occurs.
 
@@ -78,7 +78,7 @@ async def test_duplicate_ttsrequested_does_not_double_decrement(
     assert await wait_for_status(job_id, target="COMPLETED", timeout=180.0) == "COMPLETED"
 
     # Re-deliver a TtsRequested for a REAL, already-DONE task (id read from the DB so
-    # the test doesn't depend on the task_id format). The B4 conditional claim must
+    # the test doesn't depend on the task_id format). The conditional claim must
     # no-op: no second decrement, counter stays 0 (never negative).
     tasks = await _task_rows(db_engine, job_id)
     assert len(tasks) == 3

@@ -1,8 +1,8 @@
-"""Shared test configuration (harness note 11 — validation hierarchy).
+"""Shared test configuration (validation hierarchy).
 
 Auto-skips `integration` and `e2e` tests when Docker is unavailable, so the no-Docker
 `make check` stays green and the verification gates never false-fail for a missing daemon.
-The integration/e2e test BODIES are written per rung (TDD) as the pipeline lands; the
+The integration/e2e test BODIES are written (TDD) as the pipeline lands; the
 scaffolding (markers + skip policy) exists now so those layers slot in without rework.
 """
 

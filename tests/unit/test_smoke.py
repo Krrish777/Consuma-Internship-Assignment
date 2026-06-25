@@ -20,7 +20,7 @@ def test_settings_defaults() -> None:
 
 
 def test_f02_new_knobs_defaults() -> None:
-    """F0.2 knobs load with their spec defaults."""
+    """Knobs load with their spec defaults."""
     s = Settings()
     assert s.MAX_MANUSCRIPT_BYTES == 1_000_000
     assert s.MAX_BLOCKS == 10_000

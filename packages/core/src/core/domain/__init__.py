@@ -1,1 +1,1 @@
-"""domain — PURE logic, no I/O. Unit-testable without Docker (spec §5)."""
+"""domain — PURE logic, no I/O. Unit-testable without Docker."""

@@ -1,10 +1,10 @@
-"""H3 / H-PURGE — the reconciler loop now also purges the inbox (L2, pure).
+"""The reconciler loop now also purges the inbox (pure).
 
-``run_sweeper`` historically re-published orphaned PENDING jobs only (G8). H3
-folds processed_events retention (H10/H3) into the same loop. These tests pin the
+``run_sweeper`` historically re-published orphaned PENDING jobs only. It now
+folds processed_events retention into the same loop. These tests pin the
 loop contract: each pass runs BOTH ``sweep_once`` and ``purge_once``, and the two
 are independent — a failure in one must not skip the other. The real DELETE
-semantics are L3 (testcontainers, test_sweeper.py); here both are mocked.
+semantics are tested with testcontainers (test_sweeper.py); here both are mocked.
 """
 
 from __future__ import annotations

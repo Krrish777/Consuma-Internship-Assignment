@@ -1,4 +1,4 @@
-"""R0.4 — structured logging unit tests (no Docker required).
+"""Structured logging unit tests (no Docker required).
 
 Proves:
   - configure_logging sets up the handler without crashing

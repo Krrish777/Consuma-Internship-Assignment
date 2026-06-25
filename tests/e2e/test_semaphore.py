@@ -1,8 +1,8 @@
-"""R4.1 — global TTS semaphore probe (L4): one shared limit across N workers.
+"""Global TTS semaphore probe: one shared limit across N workers.
 
 Constraint A: at most ``TTS_CONCURRENCY`` (3) TTS calls run concurrently across
 ALL workers, not per-process. The limit lives in Redis as a leased N-token list
-seeded exactly once (X4's atomic ``ensure_slots`` defeats the 3×N footgun), so
+seeded exactly once (the atomic ``ensure_slots`` defeats the 3×N footgun), so
 scaling the worker service does not multiply the budget.
 
 Measurement note: the sim's vendor latency is ``asyncio.sleep(0)``, so a slot is
@@ -10,9 +10,9 @@ held for microseconds — external sampling can never catch a live peak. The
 deterministic, honest proof is the **global-pool invariant**: with 4 real workers
 running, the token pool totals exactly 3 (not 4×3). Combined with the BLPOP acquire
 (a token must be popped to run, and only 3 exist), that *structurally* bounds peak
-concurrency at 3. The live-peak and crashed-holder-reclaim (X5) behaviours are
-L3-proven (test_redis semaphore/reaper). Also covers I4 (scaled replicas share one
-semaphore).
+concurrency at 3. The live-peak and crashed-holder-reclaim behaviours are
+proven (test_redis semaphore/reaper). Also covers scaled replicas sharing one
+semaphore.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""D4 — content_hash unit tests (no Docker required).
+"""content_hash unit tests (no Docker required).
 
 The content hash is the cache/idempotency key for the vendor-call dedupe
 (sha256 of the block TEXT). It MUST be stable across processes/runs and

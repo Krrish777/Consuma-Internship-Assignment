@@ -43,7 +43,7 @@ async def complete_task_and_decrement(
     Returns the new ``pending_count`` (the caller emits ``StitchReady`` when it
     is 0), or ``None`` when the task was already counted (idempotent no-op). The
     commit happens here so claim+decrement are one atomic unit; the broker ack
-    happens *after* this returns, in the W4 handler.
+    happens *after* this returns, in the handler.
     """
     claim = (
         update(Task)

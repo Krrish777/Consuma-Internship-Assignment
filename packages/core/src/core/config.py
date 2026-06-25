@@ -1,4 +1,4 @@
-"""Env-driven settings (spec §10).
+"""Env-driven settings.
 
 Pure configuration boilerplate — every value is injected via docker-compose at
 runtime. The tuning knobs carry the spec defaults so the engine has correct
@@ -30,24 +30,24 @@ class Settings(BaseSettings):
     RETRY_DELAYS: str = "1,4,16"  # seconds; use .retry_delays for the parsed tuple
     PREFETCH: int = 16
 
-    # --- Input guards (H13 size, H14 block cap) ---
+    # --- Input guards (size, block cap) ---
     MAX_MANUSCRIPT_BYTES: int = 1_000_000
     MAX_BLOCKS: int = 10_000
 
-    # --- Webhook (H-SSRF) ---
+    # --- Webhook ---
     WEBHOOK_ALLOWLIST: str = ""  # comma-sep hosts; empty = log-only mode
     WEBHOOK_TIMEOUT_S: float = 5.0
 
-    # --- Sweeper / pending-timeout (G8 / H1) ---
+    # --- Sweeper / pending-timeout ---
     SWEEP_INTERVAL_S: int = 30
     PENDING_TIMEOUT_S: int = 120
 
     # --- Redis TTLs ---
-    LEASE_TTL_S: int = 30  # H6 semaphore lease
-    RESEED_INTERVAL_S: int = 30  # H1 worker re-seeds tts:slots if Redis is wiped
-    REAP_INTERVAL_S: int = 30  # H2 worker reclaims crashed holders' orphaned slots
-    CACHE_TTL_S: int = 86_400  # R3 / H-DANGLE content cache
-    PROCESSED_EVENTS_RETENTION_S: int = 604_800  # H10 inbox retention (7 days)
+    LEASE_TTL_S: int = 30  # semaphore lease
+    RESEED_INTERVAL_S: int = 30  # worker re-seeds tts:slots if Redis is wiped
+    REAP_INTERVAL_S: int = 30  # worker reclaims crashed holders' orphaned slots
+    CACHE_TTL_S: int = 86_400  # content cache
+    PROCESSED_EVENTS_RETENTION_S: int = 604_800  # inbox retention (7 days)
 
     @property
     def retry_delays(self) -> tuple[int, ...]:
