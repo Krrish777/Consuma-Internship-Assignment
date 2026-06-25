@@ -1,18 +1,25 @@
 """aio-pika adapter — connection + topology + publish/consume (spec §5, §7).
 
 Molded from the kieled FastAPI+aio-pika skeleton, bent to our MUST rules (CLAUDE.md):
-  - durable NAMED exchange + durable queue   (skeleton: default exchange, auto_delete)
-  - publisher confirms ON                    (skeleton: confirms off)
+  - durable NAMED exchange + durable queues (skeleton: default exchange, auto_delete)
+  - publisher confirms ON (skeleton: confirms off)
   - PERSISTENT messages carrying a pydantic event = pointers, never bytes (spec §7)
   - MANUAL ack: consume registers with no_ack=False; the handler acks LAST, after its
     Postgres commit + downstream publish. This helper deliberately does NOT auto-ack
     (no `async with message.process()`), because ack-before-publish loses events on crash.
 
-Raw aio-pika only — no Celery/Taskiq/ARQ/RQ (CLAUDE.md rule #2).
+Retry ladder (BACKLOG H-XDEATH, H-TTLHOL, H-REF1/H-REF2):
+  - One delay queue PER delay value (q.retry.<stage>.<delay>s) to avoid head-of-line
+    blocking from mixed-TTL messages on a single queue.
+  - Each delay queue has `x-message-ttl` = delay_ms and dead-letters back to pipeline
+    exchange with routing key = original queue. So expired messages return to the live
+    queue for another attempt.
+  - Retry count is tracked via a custom header `x-retry-count` stamped at publish time.
+    NEVER use `x-death.count` — on RabbitMQ ≥3.13 (and 4.x) it is frozen at 1 per
+    queue and breaks retry gating (BACKLOG H-XDEATH).
+  - After MAX_RETRIES, publish directly to q.dlq.
 
-Scope note: ``declare_minimal`` is the Rung-0/R0.2 topology (exchange + q.parse). The full
-retry-ladder topology (q.tts/q.stitch + 1s/4s/16s delay queues + q.dlq) is R2.1, molded
-later from ``retry-dlx-aiopika`` — this leaves a clean seam, not a half-stubbed ladder.
+Raw aio-pika only — no Celery/Taskiq/ARQ/RQ (CLAUDE.md rule #2).
 """
 
 from __future__ import annotations
@@ -30,7 +37,15 @@ from aio_pika.abc import (
 from pydantic import BaseModel
 
 EXCHANGE = "pipeline"
+
 Q_PARSE = "q.parse"
+Q_TTS = "q.tts"
+Q_STITCH = "q.stitch"
+Q_DLQ = "q.dlq"
+
+RETRY_DELAYS = (1, 4, 16)
+
+_HEADER_RETRY_COUNT = "x-retry-count"
 
 Handler = Callable[[AbstractIncomingMessage], Awaitable[None]]
 
@@ -54,6 +69,48 @@ async def declare_minimal(
     return exchange, queue
 
 
+async def declare_full(
+    channel: AbstractChannel,
+    *,
+    retry_delays: tuple[int, ...] = RETRY_DELAYS,
+) -> AbstractExchange:
+    """Declare the full Rung-2 topology (R2.1).
+
+    Topology layout:
+      pipeline (direct exchange)
+        → q.parse, q.tts, q.stitch    (live queues)
+        → q.dlq                        (poison-pill sink)
+        → q.retry.<queue>.<delay>s     (one per delay per live queue, uniform TTL)
+                                        expires → back to pipeline/q.<stage>
+
+    BACKLOG H-TTLHOL: separate delay queue per delay value → no head-of-line blocking.
+    BACKLOG H-XDEATH: retry count in custom header `x-retry-count`, not `x-death.count`.
+    """
+    exchange = await channel.declare_exchange(EXCHANGE, aio_pika.ExchangeType.DIRECT, durable=True)
+
+    dlq = await channel.declare_queue(Q_DLQ, durable=True)
+    await dlq.bind(exchange, routing_key=Q_DLQ)
+
+    for live_queue in (Q_PARSE, Q_TTS, Q_STITCH):
+        q = await channel.declare_queue(live_queue, durable=True)
+        await q.bind(exchange, routing_key=live_queue)
+
+        for delay_s in retry_delays:
+            retry_q_name = f"q.retry.{live_queue}.{delay_s}s"
+            retry_q = await channel.declare_queue(
+                retry_q_name,
+                durable=True,
+                arguments={
+                    "x-message-ttl": delay_s * 1000,
+                    "x-dead-letter-exchange": EXCHANGE,
+                    "x-dead-letter-routing-key": live_queue,
+                },
+            )
+            await retry_q.bind(exchange, routing_key=retry_q_name)
+
+    return exchange
+
+
 async def publish(exchange: AbstractExchange, event: BaseModel, routing_key: str) -> None:
     """Publish a pydantic event as a PERSISTENT JSON message (pointers, never bytes).
 
@@ -67,6 +124,75 @@ async def publish(exchange: AbstractExchange, event: BaseModel, routing_key: str
         delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
     )
     await exchange.publish(message, routing_key=routing_key)
+
+
+async def publish_with_retry_count(
+    exchange: AbstractExchange,
+    body: bytes,
+    routing_key: str,
+    retry_count: int,
+    content_type: str = "application/json",
+) -> None:
+    """Publish a raw message with an explicit retry-count header.
+
+    Used by the retry path to stamp `x-retry-count` before re-routing.
+    Callers pass the raw body (already serialised) to avoid a double-encode.
+    """
+    message = aio_pika.Message(
+        body=body,
+        content_type=content_type,
+        delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+        headers={_HEADER_RETRY_COUNT: retry_count},
+    )
+    await exchange.publish(message, routing_key=routing_key)
+
+
+def get_retry_count(message: AbstractIncomingMessage) -> int:
+    """Read `x-retry-count` header from an incoming message (0 if absent)."""
+    headers = message.headers or {}
+    val = headers.get(_HEADER_RETRY_COUNT, 0)
+    return int(val) if isinstance(val, (int, float, str)) else 0
+
+
+async def route_retry_or_dlq(
+    exchange: AbstractExchange,
+    message: AbstractIncomingMessage,
+    *,
+    live_queue: str,
+    max_retries: int = 3,
+    retry_delays: tuple[int, ...] = RETRY_DELAYS,
+) -> None:
+    """Route a failing message: next delay queue, or DLQ after max_retries.
+
+    Call this from exception handlers BEFORE acking the original message.
+    The caller still owns the ack/nack after this returns.
+
+    BACKLOG H-XDEATH: uses x-retry-count custom header, not x-death.count.
+    BACKLOG H-TTLHOL: one delay queue per delay — no HOL blocking.
+    """
+    count = get_retry_count(message) + 1
+    if count > max_retries:
+        await exchange.publish(
+            aio_pika.Message(
+                body=message.body,
+                content_type=message.content_type or "application/json",
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                headers={_HEADER_RETRY_COUNT: count},
+            ),
+            routing_key=Q_DLQ,
+        )
+    else:
+        delay_s = retry_delays[min(count - 1, len(retry_delays) - 1)]
+        retry_q_name = f"q.retry.{live_queue}.{delay_s}s"
+        await exchange.publish(
+            aio_pika.Message(
+                body=message.body,
+                content_type=message.content_type or "application/json",
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                headers={_HEADER_RETRY_COUNT: count},
+            ),
+            routing_key=retry_q_name,
+        )
 
 
 async def consume(
