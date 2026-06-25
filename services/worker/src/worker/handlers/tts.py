@@ -6,19 +6,19 @@ For each ``TtsRequested`` (pointers: job_id + task_id):
      ``block_index`` + the job's manuscript, ``split_blocks``, index. The content
      hash of that text equals the stored ``block_hash`` and is the cache key AND
      the ``tts/<hash>.wav`` object key.
-  2. **Check the content cache BEFORE acquiring a semaphore slot** (Constraint B /
-     SPEC §4): a hit burns no token — go straight to the fan-in decrement.
-  3. On a miss, take the H8 in-flight lock *without* a slot (a waiter holding a slot
+  2. **Check the content cache BEFORE acquiring a semaphore slot**: a hit burns no
+     token — go straight to the fan-in decrement.
+  3. On a miss, take the in-flight lock *without* a slot (a waiter holding a slot
      would starve the synthesiser it waits on), then acquire a leased Redis slot
-     (R2/X5 — never ``asyncio.Semaphore``), synthesise, store to MinIO, populate the
+     (never ``asyncio.Semaphore``), synthesise, store to MinIO, populate the
      cache, release. Losers of the in-flight race wait for the winner's cache entry.
-  4. **Atomic fan-in decrement (B4)** — a durable conditional claim + atomic
+  4. **Atomic fan-in decrement** — a durable conditional claim + atomic
      ``UPDATE … RETURNING``. Exactly one caller observes ``pending_count == 0`` and
      emits ``StitchReady``.
-  5. **H-EMIT** — if the claim no-ops on a redelivery (task already DONE → ``None``),
+  5. If the claim no-ops on a redelivery (task already DONE → ``None``),
      re-read ``pending_count``; if it is 0 the barrier was crossed but the
      ``StitchReady`` may have been lost to a crash before publish, so re-emit it
-     (stitch is idempotent, W5/H5).
+     (stitch is idempotent).
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ async def handle_tts(ctx: WorkerContext, event: TtsRequested) -> None:
     h = content_hash(block_text)
     audio_key = f"tts/{h}.wav"
 
-    # Cache check BEFORE acquiring a slot — a hit burns no token (Constraint B).
+    # Cache check BEFORE acquiring a slot — a hit burns no token.
     cached = await ctx.cache.cache_get(h)
     audio_key = (
         cached

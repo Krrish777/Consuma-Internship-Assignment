@@ -2,22 +2,22 @@
 
 Consumes ``JobCreated``, loads the manuscript from MinIO, simulates the parse
 vendor call (15% transient failure injection; a poison manuscript fails every
-attempt → DLQ after the retry ladder, per R2.0/SPEC §1), splits it into N blocks,
+attempt → DLQ after the retry ladder), splits it into N blocks,
 writes **N Task rows + pending_count=N in ONE transaction**, advances the job to
 GENERATING, and **fans out N ``TtsRequested``** events.
 
-Two correctness rules this card exists for:
-  * **Re-publishable emitter, never inbox-skipped (H2).** A redelivered JobCreated
+Two correctness rules:
+  * **Re-publishable emitter, never inbox-skipped.** A redelivered JobCreated
     must still emit the N events — a prior crash may have committed the rows but
     lost the publishes. So the task rows use ``ON CONFLICT DO NOTHING`` and the N
-    events are published on EVERY delivery. ``begin_parse`` (H15) sets the counter
+    events are published on EVERY delivery. ``begin_parse`` sets the counter
     only on the first CAS out of PENDING, so a re-run never resurrects the counter.
   * **0-block must terminate (not hang).** An empty manuscript means a fan-in
     barrier of 0; the job still advances (PENDING→PARSING→GENERATING, FSM-legal)
     and a ``StitchReady`` is emitted immediately (the barrier is already crossed),
     so the stitch handler finalises it. A direct PENDING→STITCHING jump would be
     illegal (state.LEGAL); the queued StitchReady is the FSM-legal realisation of
-    the card's "0-block → STITCHING directly".
+    "0-block → STITCHING directly".
 
 Deterministic ``task_id = f"{job_id}-{i}"`` (block index) keeps redelivery safe:
 re-published events always reference the rows already in the DB.
@@ -92,7 +92,7 @@ async def handle_parse(ctx: WorkerContext, event: JobCreated) -> None:
                 .on_conflict_do_nothing(index_elements=["job_id", "block_index"])
             )
             await session.execute(insert_tasks)  # no commit — begin_parse commits both
-        # begin_parse CAS sets pending_count=N only on the first run (H15) and
+        # begin_parse CAS sets pending_count=N only on the first run and
         # commits, flushing the task inserts in the same transaction.
         await begin_parse(session, job_id, n)
 
