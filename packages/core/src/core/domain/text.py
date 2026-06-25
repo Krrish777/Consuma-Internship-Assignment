@@ -1,4 +1,4 @@
-"""Manuscript → blocks splitter (BOM 02-D3, feeds R2.3 parse fan-out).
+"""Manuscript → blocks splitter (feeds parse fan-out).
 
 Pure domain: no I/O, no randomness, no global state.
 
@@ -12,9 +12,9 @@ The splitting rule (graders read intent):
     only a blank line does. Reflowing text for TTS is not this layer's job.
 
 The number of blocks IS the fan-out width: empty/whitespace-only input → ``[]``
-(0 blocks, which W3 routes straight to STITCHING with no hang); one paragraph →
+(0 blocks, which routes straight to STITCHING with no hang); one paragraph →
 one block. This function never raises — bounding manuscript/block size is the
-ingestion guard's job (W3 / H14), not the splitter's.
+ingestion guard's job, not the splitter's.
 """
 
 from __future__ import annotations

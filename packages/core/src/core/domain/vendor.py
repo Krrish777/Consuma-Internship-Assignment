@@ -1,10 +1,10 @@
-"""Vendor simulation — fault-injection substrate (SPEC §1-§2, R2.0).
+"""Vendor simulation — fault-injection substrate.
 
 Pure domain: stdlib + sibling domain primitives only. No asyncio, no I/O. The
 worker handler wraps these with ``await asyncio.sleep(...)`` to model vendor
 latency; the fault-injection logic here is unit-testable without any Docker.
 
-Failure model (SPEC §1 — single retryable class)
+Failure model (single retryable class)
 ------------------------------------------------
 Every simulated failure raises ONE retryable class, ``VendorError``. The spec
 defines a "poison pill" as a *consistently-failing* manuscript that lands in the
@@ -13,11 +13,11 @@ DLQ **after 3 retries with exponential backoff** — the same routing as the ran
 transient raise the *same* type; they differ only in outcome: a transient failure
 almost always succeeds on retry, while a poison manuscript fails every attempt
 and therefore deterministically exhausts the ladder → DLQ. We deliberately do
-NOT model a separate non-retryable error (see docs/DECISIONS.md 2026-06-25 R2.0).
+NOT model a separate non-retryable error (see docs/DECISIONS.md 2026-06-25).
 
 Primitive ownership
 -------------------
-Block splitting and content hashing are the canonical D3/D4 domain primitives —
+Block splitting and content hashing are the canonical domain primitives —
 ``simulate_parse`` composes ``core.domain.text.split_blocks`` and ``tts_fake_audio``
 keys on ``core.domain.hash.content_hash``. They are imported, never duplicated.
 """
@@ -30,7 +30,7 @@ from core.domain.hash import content_hash
 from core.domain.text import split_blocks
 
 POISON_MARKER = "__POISON__"
-PARSE_FAILURE_RATE = 0.15  # SPEC §1: 15% transient error rate on the parse stage
+PARSE_FAILURE_RATE = 0.15  # 15% transient error rate on the parse stage
 
 
 class VendorError(RuntimeError):
@@ -40,7 +40,7 @@ class VendorError(RuntimeError):
     the retry ladder (1/4/16s) then the DLQ after MAX_RETRIES. Both the random
     15% failures and the deterministic poison manuscript raise this same type;
     poison simply never succeeds, so it exhausts the ladder and dead-letters
-    after 3 attempts (SPEC §1).
+    after 3 attempts.
     """
 
 
@@ -50,13 +50,13 @@ def simulate_parse(
     failure_rate: float = PARSE_FAILURE_RATE,
     rng: random.Random | None = None,
 ) -> list[str]:
-    """Simulate the parse vendor call: failure injection, then the D3 block split.
+    """Simulate the parse vendor call: failure injection, then the block split.
 
     Poison path (POISON_MARKER in text): always raises ``VendorError`` — a
     consistently-failing manuscript the retry ladder funnels to the DLQ after 3
-    attempts (SPEC §1). Normal path: raises ``VendorError`` with probability
+    attempts. Normal path: raises ``VendorError`` with probability
     ``failure_rate``; pass an explicit ``rng`` for a deterministic, unit-assertable
-    draw. On success, returns the canonical D3 paragraph blocks.
+    draw. On success, returns the canonical paragraph blocks.
 
     Raises:
         VendorError: simulated transient 500 (retryable; DLQ after MAX_RETRIES).
@@ -74,7 +74,7 @@ def simulate_parse(
 def tts_fake_audio(text: str) -> bytes:
     """Return deterministic fake audio bytes for a text block.
 
-    Keyed on the canonical D4 content hash: identical text → identical bytes,
-    which is exactly what the R4.2 TTS content cache relies on for dedup.
+    Keyed on the canonical content hash: identical text → identical bytes,
+    which is exactly what the TTS content cache relies on for dedup.
     """
     return b"FAKE_AUDIO:" + content_hash(text).encode("ascii")

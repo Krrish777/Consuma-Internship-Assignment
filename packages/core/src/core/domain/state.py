@@ -1,8 +1,8 @@
-"""Job finite-state machine — legal-transition guard (spec §6).
+"""Job finite-state machine — legal-transition guard.
 
 Pure domain: no I/O. The FSM is data + two pure helpers.
 
-Applying transitions (H-FSM — the contract every status write MUST honor)
+Applying transitions (the contract every status write MUST honor)
 ------------------------------------------------------------------------
 `can_transition` is a pure predicate. Applying it as read-then-write in Python
 (`if can_transition(cur, nxt): row.status = nxt`) lets two workers both read the
