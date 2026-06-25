@@ -26,11 +26,13 @@ from redis.asyncio import Redis, from_url
 
 from core.infra.logging import get_logger
 
-__all__ = ["Redis", "Semaphore", "get_redis", "ping"]
+__all__ = ["Cache", "Redis", "Semaphore", "get_redis", "ping"]
 
 _log = get_logger(__name__)
 
 SLOTS_KEY = "tts:slots"
+CACHE_PREFIX = "tts:cache:"
+DEFAULT_CACHE_TTL = 86_400  # 24h; MUST stay <= the MinIO object lifetime (H-DANGLE)
 
 
 def _as_str(value: bytes | str) -> str:
@@ -220,6 +222,36 @@ class Semaphore:
                 self.slots,
             )
         return reclaimed
+
+
+class Cache:
+    """Content-hash TTS cache (Constraint B: cost-idempotency).
+
+    Maps ``tts:cache:<sha256(text)>`` -> the prior MinIO object URL/key, with a TTL.
+    Identical text synthesised twice must NOT re-hit the vendor (SPEC §1): the W4
+    handler consults this BEFORE acquiring a semaphore slot, so a hit burns no token.
+
+    Keyed on D4's canonical ``content_hash(text)``, never the task_id — conflating
+    the cost cache with the fan-in counter is the named junior trap. This is NOT
+    durable truth: it is rebuildable from MinIO and TTL'd, and the TTL MUST stay
+    <= the MinIO object lifetime so a HIT never returns a dangling key (H-DANGLE).
+    """
+
+    def __init__(self, client: Redis, *, ttl: int = DEFAULT_CACHE_TTL) -> None:
+        self._client = client
+        self.ttl = ttl
+
+    def _key(self, content_hash: str) -> str:
+        return f"{CACHE_PREFIX}{content_hash}"
+
+    async def cache_get(self, content_hash: str) -> str | None:
+        """Return the cached MinIO URL for this content hash, or None on a miss."""
+        raw = await self._client.get(self._key(content_hash))
+        return None if raw is None else _as_str(raw)
+
+    async def cache_set(self, content_hash: str, url: str) -> None:
+        """Record url for this content hash with the configured TTL (SETEX)."""
+        await self._client.setex(self._key(content_hash), self.ttl, url)
 
     @asynccontextmanager
     async def slot(self, owner: str, *, timeout: float = 0.0) -> AsyncIterator[str | None]:

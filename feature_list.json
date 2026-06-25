@@ -228,15 +228,15 @@
       "rung": 4,
       "behavior": "Lease reaper: heartbeat renew + atomic reclaim (BOM 12-X5, H6): acquire spawns a heartbeat task re-SET lease XX EX every ttl/3 (cancel on release) so a healthy-but-slow holder is never reclaimed; reap() atomically (Lua, owner-checked) RPUSHes expired-but-unreturned tokens back exactly once (concurrent reapers return a token at most once). Documented as soft/best-effort limit, breaches logged.",
       "verification": ["uv run pytest tests/integration -k redis (stopped-heartbeat holder reclaimed after TTL; heartbeating holder keeps token; two reapers reclaim once)"],
-      "status": "in_progress",
-      "evidence": ""
+      "status": "passing",
+      "evidence": "uv run pytest tests/integration -k redis -> 11 passed (3 new X5: crashed holder's expired-lease token reclaimed by reap()->1; live heartbeating holder outlives TTL and reap()->0 leaves it; two concurrent reapers reclaim a token sum==1 with no double-return) against real redis:7-alpine; acquire spawns a ttl/3 SET-XX heartbeat (cancelled on release), reap() runs atomic owner-safe _RECLAIM_LUA per token, soft-limit breaches logged; full gate: ruff+fmt clean, mypy 44 files 0 errors, pytest tests/unit 82 passed; commit 6203aeb HEAD anchor (user handles git)"
     },
     {
       "id": "R3",
       "rung": 4,
       "behavior": "Content-hash cache (BOM 06-R3, Constraint B cost-idempotency): cache_get(h)->str|None (GET tts:cache:{h}), cache_set(h,url) (SETEX tts:cache:{h} CACHE_TTL_S url). Keyed on canonical content_hash (D4), never task_id. CACHE_TTL_S <= MinIO object lifetime (H-DANGLE). Consulted before slot acquire; not durable truth (rebuildable from MinIO).",
       "verification": ["uv run pytest tests/integration -k redis (set then get returns url; missing hash -> None; entry expires after TTL)"],
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": ""
     },
     {

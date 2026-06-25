@@ -13,8 +13,9 @@ from collections.abc import AsyncIterator, Iterator
 import pytest
 from testcontainers.redis import RedisContainer
 
+from core.domain.hash import content_hash
 from core.infra import redis as redis_infra
-from core.infra.redis import Semaphore
+from core.infra.redis import Cache, Semaphore
 
 pytestmark = pytest.mark.integration
 
@@ -193,3 +194,39 @@ async def test_two_reapers_reclaim_a_token_at_most_once(
     results = await asyncio.gather(sem_a.reap(), sem_b.reap())
     assert sum(results) == 1  # exactly one reaper returned the token
     assert await client.llen("tts:slots") == 3  # no double-return
+
+
+# --- R3: content-hash cache (Constraint B) -----------------------------------
+
+
+async def test_cache_set_then_get_returns_url(client: redis_infra.Redis) -> None:
+    cache = Cache(client, ttl=3600)
+    h = content_hash("a block of manuscript text")
+
+    assert await cache.cache_get(h) is None  # cold miss
+    await cache.cache_set(h, "minio://audio/tts/abc123.wav")
+    assert await cache.cache_get(h) == "minio://audio/tts/abc123.wav"
+
+
+async def test_cache_miss_returns_none(client: redis_infra.Redis) -> None:
+    cache = Cache(client, ttl=3600)
+    assert await cache.cache_get(content_hash("never stored")) is None
+
+
+async def test_cache_key_is_content_hash_with_ttl(client: redis_infra.Redis) -> None:
+    cache = Cache(client, ttl=3600)
+    h = content_hash("keyed on sha256(text), never task_id")
+    await cache.cache_set(h, "minio://x")
+
+    ttl = await client.ttl(f"tts:cache:{h}")
+    assert 0 < ttl <= 3600  # TTL'd, not durable truth
+
+
+async def test_cache_entry_expires_after_ttl(client: redis_infra.Redis) -> None:
+    cache = Cache(client, ttl=1)
+    h = content_hash("ephemeral")
+    await cache.cache_set(h, "minio://x")
+    assert await cache.cache_get(h) == "minio://x"
+
+    await asyncio.sleep(1.5)
+    assert await cache.cache_get(h) is None  # expired -> rebuildable from MinIO
