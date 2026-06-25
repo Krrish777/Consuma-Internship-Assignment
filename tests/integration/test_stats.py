@@ -1,7 +1,7 @@
-"""G7 / R5.1 — GET /stats observability endpoint (L3).
+"""GET /stats observability endpoint (L3).
 
 Seeds jobs in mixed statuses directly into Postgres, then asserts that
-``GET /stats`` returns accurate per-status counts via B6's SQL aggregate
+``GET /stats`` returns accurate per-status counts via a SQL aggregate
 (``job_counts_by_status``) zero-filled into a stable shape covering every
 FSM state.
 

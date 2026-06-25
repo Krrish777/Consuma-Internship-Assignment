@@ -1,16 +1,16 @@
-"""R2.1 — Full broker retry topology integration test (RabbitMQ via testcontainers).
+"""Full broker retry topology integration test (RabbitMQ via testcontainers).
 
 Proves:
   - declare_full creates exchange + all live queues (q.parse/q.tts/q.stitch/q.dlq)
   - Per-delay retry queues exist for each delay value per live queue
   - route_retry_or_dlq publishes to the correct delay queue on first failure
   - route_retry_or_dlq publishes to q.dlq after max_retries
-  - Custom x-retry-count header increments correctly (H-XDEATH: no x-death.count reliance)
+  - Custom x-retry-count header increments correctly (no x-death.count reliance)
 
-BACKLOG items addressed:
-  H-XDEATH: retry count via custom header, not x-death.count
-  H-TTLHOL: separate delay queue per delay value, no head-of-line blocking
-  H-REF2: 1/4/16s ladder built from scratch (not copied from single-delay reference repo)
+Design decisions:
+  - retry count via custom header, not x-death.count
+  - separate delay queue per delay value, no head-of-line blocking
+  - 1/4/16s ladder built from scratch (not copied from single-delay reference repo)
 """
 
 from __future__ import annotations

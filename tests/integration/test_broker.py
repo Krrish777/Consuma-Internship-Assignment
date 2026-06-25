@@ -1,7 +1,7 @@
-"""R0.2 / toward R2.1 — broker adapter round-trip against a real RabbitMQ.
+"""Broker adapter round-trip against a real RabbitMQ.
 
 Marked ``integration``: conftest auto-skips it when no Docker daemon is present.
-Proves the molded skeleton (spec §5, §7):
+Proves the molded skeleton:
   - connect_robust + durable declare_minimal topology
   - publish carries a pydantic event as JSON (pointers, never bytes)
   - consume uses MANUAL ack (no_ack=False); an un-acked message is REDELIVERED
