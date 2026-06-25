@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from worker.maintenance import run_reseeder
 
@@ -46,27 +46,9 @@ async def _drive(sem: Any, *, passes: int, interval_s: int = 5) -> list[tuple[st
     sem.ensure_slots = recording_ensure
 
     with contextlib.suppress(asyncio.CancelledError):
-        with _patched_sleep(fake_sleep):
+        with patch("worker.maintenance.asyncio.sleep", new=fake_sleep):
             await run_reseeder(semaphore=sem, interval_s=interval_s)
     return order
-
-
-class _patched_sleep:
-    """Context manager swapping ``worker.maintenance.asyncio.sleep`` for a fake."""
-
-    def __init__(self, fake: Any) -> None:
-        self._fake = fake
-
-    def __enter__(self) -> None:
-        import worker.maintenance as mod
-
-        self._orig = mod.asyncio.sleep
-        mod.asyncio.sleep = self._fake
-
-    def __exit__(self, *exc: object) -> None:
-        import worker.maintenance as mod
-
-        mod.asyncio.sleep = self._orig
 
 
 async def test_run_reseeder_sleeps_before_first_reseed() -> None:

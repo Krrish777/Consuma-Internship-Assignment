@@ -54,6 +54,24 @@ def restart_container(name: str) -> None:
     _docker("restart", name)
 
 
+def flush_redis(name: str = REDIS) -> None:
+    """Wipe ALL Redis keys (``FLUSHALL``) — deterministically simulates a Redis loss.
+
+    Models the H1 failure precisely: ``tts:slots`` and its init marker vanish, as
+    they would on an eviction or a restart-without-persistence. Preferred over
+    ``docker restart`` for this probe because redis:7-alpine's default RDB snapshots
+    could reload on restart (the container layer survives a restart), which would
+    leave the pool intact and make the probe vacuous. ``FLUSHALL`` has no such
+    ambiguity and keeps the connection up, isolating the test to the re-seed path.
+    """
+    _docker("exec", name, "redis-cli", "FLUSHALL")
+
+
+def redis_llen(key: str, name: str = REDIS) -> int:
+    """Return the length of a Redis list (used to assert the slots pool state)."""
+    return int(_docker("exec", name, "redis-cli", "LLEN", key).strip())
+
+
 def scale_workers(n: int) -> None:
     """Scale the worker service to N replicas (the deployment shape for R4.1/I4).
 
