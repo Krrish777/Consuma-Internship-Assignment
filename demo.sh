@@ -1,17 +1,4 @@
 #!/usr/bin/env bash
-# demo.sh — narrated, recording-friendly walkthrough of the resilience probes.
-#
-# The happy path is worth almost nothing (SPEC §2); the grade lives in how failure
-# is handled. This script runs the three named probes from the brief — crash
-# recovery, poison-pill/DLQ, duplicate delivery — each as a self-narrating segment:
-#
-#   1. a banner states the fault injected, what to watch, and what it proves
-#       (read it aloud — it is your cue card),
-#   2. the worker/gateway logs stream live in the FOREGROUND (the story, every
-#       line stamped with job_id, SPEC's trace key),
-#   3. the e2e probe drives the real stack in the background,
-#   4. a PASS/FAIL verdict prints with the one-line claim it just demonstrated.
-#
 # Usage (run in your OWN terminal while recording — it pauses for narration):
 #   ./demo.sh            # all three scenarios, with pauses
 #   ./demo.sh crash      # just crash recovery
@@ -21,7 +8,6 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-# ── presentation helpers ──────────────────────────────────────────────────────
 BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'
 YELLOW=$'\033[33m'; CYAN=$'\033[36m'; RESET=$'\033[0m'
 RULE="────────────────────────────────────────────────────────────────────────"
@@ -51,11 +37,6 @@ verdict() { # $1 rc  $2 claim  $3 logfile
   fi
 }
 
-# ── run one probe with logs streaming in the foreground ───────────────────────
-# Starts the pytest probe in the background, then follows the worker+gateway logs
-# (the narrative) until the probe finishes. tail=0 = only lines emitted from now,
-# so each segment's logs start clean. `docker compose logs -f` follows the worker
-# across its kill+restart, so the recovery is visible in one continuous stream.
 run_probe() { # $1 pytest node  $2 claim-on-pass
   local node="$1" claim="$2"
   local out; out="$(mktemp)"
@@ -77,7 +58,6 @@ run_probe() { # $1 pytest node  $2 claim-on-pass
   rm -f "$out" "$out.rc"
 }
 
-# ── ensure the stack is up and healthy BEFORE recording starts ────────────────
 ensure_stack() {
   printf "%sBringing the 6-service stack up (cached build is a near-no-op)…%s\n" "$DIM" "$RESET"
   docker compose up -d --build >/dev/null 2>&1 || { echo "${RED}docker compose up failed${RESET}"; exit 1; }
@@ -91,7 +71,6 @@ ensure_stack() {
   echo "${RED}gateway never became healthy — run ./init.sh and retry${RESET}"; exit 1
 }
 
-# ── the three scenarios ───────────────────────────────────────────────────────
 scenario_crash() {
   banner "Crash recovery — a worker SIGKILL loses no message" \
     "docker kill the worker, THEN submit a job (deterministic — see test docstring)." \
@@ -122,7 +101,6 @@ scenario_duplicate() {
     "a duplicated event changed nothing — no double rows, no double-decrement, the fan-in barrier stayed correct."
 }
 
-# ── entrypoint ────────────────────────────────────────────────────────────────
 SCENARIO="all"
 for arg in "$@"; do
   case "$arg" in
