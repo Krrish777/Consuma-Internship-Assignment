@@ -1,12 +1,11 @@
 # CLAUDE.md — Consuma Audio Engine
 
 Agent landing page. This is a **router**, not the spec. Read the linked docs on demand.
-**Single source of truth for requirements & decisions: [`docs/SPEC.md`](docs/SPEC.md).**
 
 ## What this is
 Core async engine: text manuscript → simulated produced audio drama, via **choreographed**
 microservices (no central orchestrator). It is a distributed-systems reliability test — the
-grade is in how failure is handled, not the happy path. See `docs/SPEC.md` §1–§2.
+grade is in how failure is handled, not the happy path.
 
 ## Stack
 Python 3.13 · uv workspace · FastAPI (gateway) · aio-pika + RabbitMQ · SQLAlchemy 2.0 (async)
@@ -58,5 +57,3 @@ Types: mypy --strict.
 Postgres = durable truth · Redis = ephemeral coordination · MinIO = bytes · broker = pointers.
 If durable truth ends up in Redis, or coordination in Postgres, it is misplaced.
 
-## Git
-Never commit/push without explicit permission. Never add a Claude co-author trailer.

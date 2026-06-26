@@ -1,7 +1,3 @@
-# Makefile — Definition-of-Done runner (harness notes 3, 7, 10).
-# No-Docker gates (lint, typecheck, test-unit) run anywhere uv is present.
-# Docker gates (dev, test-int, e2e) require a running Docker daemon.
-
 .DEFAULT_GOAL := help
 UV := uv
 

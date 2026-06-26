@@ -1,7 +1,5 @@
 name: consuma
 
-# Shared env for the app services — mirrors core/config.py defaults (spec §10).
-# Inside the compose network, services resolve each other by service name (not localhost).
 x-app-env: &app-env
   DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/consuma
   RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
@@ -11,7 +9,7 @@ x-app-env: &app-env
   MINIO_SECRET: minioadmin
 
 services:
-  # --- Backing infrastructure (single instances) ------------------------------
+  # Backing infrastructure (single instances)
   postgres:
     image: postgres:17-alpine
     environment:
@@ -29,7 +27,6 @@ services:
   rabbitmq:
     image: rabbitmq:4-management   # management UI at http://localhost:15672 (guest/guest)
     environment:
-      # Fixed cookie avoids the .erlang.cookie eacces error on Windows Docker Desktop.
       RABBITMQ_ERLANG_COOKIE: "consuma-secret-cookie"
     ports: ["5672:5672", "15672:15672"]
     volumes: ["rmqdata:/var/lib/rabbitmq"]
@@ -56,25 +53,19 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
     ports: ["9000:9000", "9001:9001"]
     volumes: ["miniodata:/data"]
-    # `mc` is MinIO's first-party CLI and is guaranteed to ship in the server image
-    # (curl has been trimmed from minio images before — don't depend on it on :latest).
-    # `mc ready local` reports cluster readiness (ready to serve I/O), not just liveness.
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 3s
       retries: 12
 
-  # --- Application services (the only ones you scale) -------------------------
+  # Application services (the only ones you scale)
   gateway:
     build:
       context: .
       dockerfile: services/gateway/Dockerfile
     environment: *app-env
     ports: ["8000:8000"]
-    # Healthcheck uses python3 (the image's runtime — no curl/wget in bookworm-slim) so
-    # "all services healthy" actually waits for the lifespan (uvicorn + broker + create_tables)
-    # to finish, not just for the container to start. Without it, clients race the boot.
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
       interval: 5s

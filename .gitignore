@@ -8,5 +8,3 @@ wheels/
 
 # Virtual environments
 .venv
-# Harness / session scaffolding (not part of the deliverable)
-tmp/

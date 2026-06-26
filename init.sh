@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# init.sh — one-shot environment bring-up + readiness check (harness note 7, "clock in").
+# init.sh — one-shot environment bring-up + readiness check.
 # Brings up the 6-service stack, waits for health, runs the no-Docker smoke test.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -34,11 +34,6 @@ done
 echo "==> Running no-Docker smoke test..."
 uv run pytest -q tests/unit
 
-# One-job end-to-end smoke (I3): submit a tiny manuscript through the LIVE gateway and
-# confirm it reaches COMPLETED — a sanity beyond unit tests that the wired pipeline
-# (gateway -> q.parse -> worker parse/tts/stitch -> Postgres/MinIO) actually works.
-# Guarded so it's skippable: set INIT_SMOKE=0 to skip. Bounded (60s) so a broken
-# pipeline fails loudly with a non-zero exit instead of hanging the bring-up.
 if [ "${INIT_SMOKE:-1}" = "1" ]; then
   echo "==> Running one-job end-to-end smoke (set INIT_SMOKE=0 to skip)..."
   resp=$(curl -fsS -X POST http://localhost:8000/jobs \
